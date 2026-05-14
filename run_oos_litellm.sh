@@ -96,7 +96,7 @@ echo "OOS_NO_VIDEO_INPUT=$OOS_NO_VIDEO_INPUT"
 
 python -m lmms_eval \
   --model litellm_chat \
-  --model_args model="$OLLAMA_MODEL",api_key="$OLLAMA_API_KEY",base_url="$OLLAMA_API_BASE",max_frames_num=768,num_concurrent=1,timeout=120,max_retries=1 \
+  --model_args model="$OLLAMA_MODEL",api_key="$OLLAMA_API_KEY",base_url="$OLLAMA_API_BASE",max_frames_num=64,num_concurrent=1,timeout=120,max_retries=1 \
   --tasks oos_videoqa \
   --batch_size 1 \
   --log_samples \
