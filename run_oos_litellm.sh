@@ -29,6 +29,10 @@ mkdir -p "$CODE_DIR/outputs/oos_ollama_login_sanity"
 
 export TMPDIR="$USER_TMPDIR"
 export LMMS_EVAL_DATASETS_CACHE="$USER_TMPDIR/lmms_eval_hf_datasets"
+
+# Encode video frames as JPEG instead of the default PNG
+export LMMS_IMAGE_ENCODE_FORMAT=JPEG
+
 export TOKENIZERS_PARALLELISM=false
 export FFMPEG_PATH=/work/courses/3dv/team1/ffmpeg-7.0.2-amd64-static/ffmpeg
 export FORCE_QWENVL_VIDEO_READER=decord
@@ -49,8 +53,14 @@ fi
 
 # Choose your Ollama Cloud model here.
 # Replace this with an actual model from your Ollama Cloud account if needed.
+# Available VL models on Ollama Cloud (per https://ollama.com/api/tags):
+#   - qwen3-vl:235b-instruct  (~470 GB, MoE) -- too big / errors
+#   - gemma3:27b              (~55 GB, multimodal)
+#   - gemma3:12b              (~24 GB, multimodal) -- 12B param, fits the 10-20B target
+#   - gemma3:4b               (~8.6 GB) -- below the range
+# Note: qwen3-vl smaller tags (8b/30b-a3b/32b) are NOT hosted on Cloud, only the 235b.
 # OLLAMA_MODEL=ollama_chat/qwen3-vl:235b-instruct
-OLLAMA_MODEL=ollama_chat/qwen3-vl:30b-a3b-instruct # Alternative slightly smaller model here.
+OLLAMA_MODEL=ollama_chat/gemma3:12b # 12B multimodal alternative on Ollama Cloud.
 
 # -------------------------------
 # OOS sanity settings
@@ -96,7 +106,7 @@ echo "OOS_NO_VIDEO_INPUT=$OOS_NO_VIDEO_INPUT"
 
 python -m lmms_eval \
   --model litellm_chat \
-  --model_args model="$OLLAMA_MODEL",api_key="$OLLAMA_API_KEY",base_url="$OLLAMA_API_BASE",max_frames_num=64,num_concurrent=1,timeout=120,max_retries=1 \
+  --model_args model="$OLLAMA_MODEL",api_key="$OLLAMA_API_KEY",base_url="$OLLAMA_API_BASE",max_frames_num=156,num_concurrent=1,timeout=120,max_retries=1 \
   --tasks oos_videoqa \
   --batch_size 1 \
   --log_samples \
