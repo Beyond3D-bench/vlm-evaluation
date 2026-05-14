@@ -52,10 +52,10 @@ export OOS_TIME_TOLERANCE_SEC=3.0
 export OOS_COORD_TOLERANCE_NORM=0.2
 
 # Video ablation switch 
-export OOS_NO_VIDEO_INPUT="1"
+export OOS_NO_VIDEO_INPUT="0"
 
 # History mode: "gold" uses gold history, "none" uses no history, "pred" uses predicted history (if available)
-export OOS_HISTORY_MODE="pred"  # "gold", "none", "pred"
+export OOS_HISTORY_MODE="none"  # "gold", "none", "pred"
 
 #Comment this out to Evaluate single step if wanted ()
 # export OOS_DEBUG_STEP=1

@@ -160,7 +160,6 @@ def _preprocess_video(video_path: str) -> str:
     _run_ffmpeg(cmd, f"Video preprocessing failed for {video_path}")
     return output_path
 
-
 def _extract_prefix_video(full_video_path: str, end_time: float) -> str:
     """Return the prefix video from 0 to query time."""
     if not os.path.exists(full_video_path):
@@ -194,6 +193,135 @@ def _extract_prefix_video(full_video_path: str, end_time: float) -> str:
     _run_ffmpeg(cmd, f"Prefix extraction failed for {canonical_video_path}")
     return output_path
 
+def _needs_anchor_marker(doc: Dict[str, Any]) -> bool:
+    if os.getenv("OOS_MARK_ANCHOR_OBJECT", "1") != "1":
+        return False
+
+    qclass = str(doc.get("step_question_class", "")).strip().lower()
+    return qclass in {
+        "oos_branch_object_object_relation",
+        "oos_branch_object_object_distance",
+    }
+
+
+def _get_anchor_marker_xy_norm(doc: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    meta = doc.get("answer_metadata") or {}
+
+    xy = meta.get("object_y_normalized_projected_pixel")
+    if not isinstance(xy, (list, tuple)) or len(xy) < 2:
+        return None
+
+    try:
+        x_norm, y_norm = float(xy[0]), float(xy[1])
+    except Exception:
+        return None
+
+    if not (0.0 <= x_norm <= 1.0 and 0.0 <= y_norm <= 1.0):
+        return None
+
+    return x_norm, y_norm
+
+
+def _extract_marked_prefix_video(
+    full_video_path: str,
+    end_time: float,
+    marker_xy_norm: Tuple[float, float],
+    marker_label: Optional[str] = None,
+) -> str:
+    """
+    Extract video prefix from 0 to end_time and draw a small point marker
+    only on the query-time frame.
+
+    marker_xy_norm is normalized coordinate: (x_norm, y_norm), each in [0, 1].
+    """
+    if not os.path.exists(full_video_path):
+        raise FileNotFoundError(f"Full video path does not exist: {full_video_path}")
+
+    if end_time <= 0:
+        raise ValueError(f"Invalid query end time: {end_time}")
+
+    canonical_video_path = _preprocess_video(full_video_path)
+
+    # Uses OOS_VIDEO_WIDTH / OOS_VIDEO_HEIGHT in your simplified _ffprobe_size().
+    dst_w, dst_h = int(os.environ.get("OOS_VIDEO_WIDTH")), int(os.environ.get("OOS_VIDEO_HEIGHT"))
+
+    x_norm, y_norm = marker_xy_norm
+
+    # Convert normalized coordinate to pixel coordinate in the actual video used by eval.
+    x = float(x_norm) * float(dst_w)
+    y = float(y_norm) * float(dst_h)
+
+    # Clamp marker center into image bounds.
+    x = max(0.0, min(float(dst_w - 1), x))
+    y = max(0.0, min(float(dst_h - 1), y))
+
+    # Small square point marker.
+    marker_size = int(os.getenv("OOS_MARKER_SIZE_PX", "8"))
+    marker_size = max(1, marker_size)
+
+    half = marker_size // 2
+    left = int(round(x)) - half
+    top = int(round(y)) - half
+
+    # Keep square marker fully inside image.
+    left = max(0, min(max(0, int(dst_w) - marker_size), left))
+    top = max(0, min(max(0, int(dst_h) - marker_size), top))
+
+    # Mark only the query frame interval.
+    # Since your videos are preprocessed to 1 fps, this means the final 1-second interval.
+    fps = float(os.getenv("OOS_TARGET_FPS", "1"))
+    frame_window = 1.0 / max(fps, 1e-6)
+
+    start_t = max(0.0, float(end_time) - frame_window)
+    end_t = float(end_time)
+
+    enable_expr = f"between(t,{start_t:.3f},{end_t:.3f})"
+
+    # Include marker settings in cache key so changing size/fps creates a new cached file.
+    config_key = (
+        f"marked_prefix|src={canonical_video_path}|end={end_t:.3f}|"
+        f"x={x:.2f}|y={y:.2f}|size={marker_size}|"
+        f"start={start_t:.3f}|end={end_t:.3f}|point_marker_only=1"
+    )
+
+    cache_dir = _stable_cache_dir()
+    output_path = os.path.join(
+        cache_dir,
+        hashlib.md5(config_key.encode("utf-8")).hexdigest() + ".mp4",
+    )
+
+    if os.path.exists(output_path):
+        return output_path
+
+    # Only drawbox; no drawtext, so it works with your ffmpeg build.
+    vf = (
+        f"drawbox=x={left}:y={top}:w={marker_size}:h={marker_size}:"
+        f"color=red@0.95:t=fill:enable='{enable_expr}'"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        "0",
+        "-i",
+        canonical_video_path,
+        "-t",
+        str(end_t),
+        "-an",
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "23",
+        output_path,
+    ]
+
+    _run_ffmpeg(cmd, f"Marked prefix extraction failed for {canonical_video_path}")
+    return output_path
 
 def _format_choices(choices: List[str]) -> str:
     return "\n".join(f"{LETTER_MAP[i]}. {choice}" for i, choice in enumerate(choices))
@@ -301,7 +429,75 @@ def _step_answer_text(step_doc: Dict[str, Any]) -> Optional[str]:
             return str(step_doc["choices"][idx])
     return None
 
+def _history_question_from_step(step: Dict[str, Any]) -> str:
+    question_text = str(step.get("question", "")).strip()
 
+    choices = step.get("choices") or []
+    if choices:
+        choice_lines = "\n".join(
+            f"{LETTER_MAP[i]}. {choice}"
+            for i, choice in enumerate(choices)
+        )
+        question_text = f"{question_text}\nOptions:\n{choice_lines}"
+
+    return question_text
+
+
+def _history_answer_from_step(step: Dict[str, Any], object_name: Optional[str] = None) -> str:
+    obj_name = str(object_name or "the object").strip() or "the object"
+    qclass = str(step.get("step_question_class", "")).strip().lower()
+
+    answer_text = None
+
+    if step.get("target_text") not in (None, ""):
+        answer_text = str(step["target_text"])
+    elif step.get("answer") not in (None, ""):
+        answer_text = str(step["answer"])
+    elif step.get("choices") and step.get("correct_idx") is not None:
+        choices = step.get("choices") or []
+        idx = int(step["correct_idx"])
+        if 0 <= idx < len(choices):
+            answer_text = str(choices[idx])
+    else:
+        acceptable = step.get("acceptable_answers") or []
+        if acceptable:
+            answer_text = str(acceptable[0])
+
+    if answer_text is None:
+        answer_text = ""
+
+    answer_text = str(answer_text).strip()
+
+    m = re.search(
+        r"(<TIME\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+video\s+\d+>)"
+        r"\s*;\s*Point=\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)",
+        answer_text,
+        flags=re.I,
+    )
+
+    if m:
+        time_token = m.group(1)
+        x = m.group(2)
+        y = m.group(3)
+
+        if qclass == "oos_step2_last_visible":
+            return (
+                f"{obj_name} was last visible at {time_token}, "
+                f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
+            )
+
+        if qclass == "oos_step3_last_placement":
+            return (
+                f"{obj_name} stopped moving at {time_token}, "
+                f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
+            )
+
+        return (
+            f"The answer is {time_token}, at normalized image coordinates "
+            f"(x={x}, y={y}), where x and y are in [0, 1]."
+        )
+
+    return answer_text
 
 
 def _default_open_answer_instruction() -> str:
@@ -392,7 +588,7 @@ def _prompt_suffix(doc: Dict[str, Any], include_answer_instruction: bool = True)
                 )
             else:
                 lines.append(
-                    "Select the best option and output only its letter: A, B, C, or D (or the matching option letter if there are more choices)."
+                    "Select the best option and output only its letter."
                 )
     else:
         if include_answer_instruction:
@@ -521,9 +717,36 @@ def _extract_history_messages_for_step(raw_doc: Dict[str, Any], current_step_id:
             pair_index += 1
 
     history = []
+    step_by_id = {
+        _step_id(s["step"]): s
+        for s in steps
+    }
+
+    object_name = raw_doc.get("object_a_name")
+
     for sid in step_ids_in_order:
-        if sid in needed and sid in history_pairs:
-            history.extend(history_pairs[sid])
+        if sid not in needed:
+            continue
+
+        step = step_by_id.get(sid)
+        if step is None:
+            continue
+
+        history.append({
+            "role": "user",
+            "content": [{
+                "type": "text",
+                "text": _history_question_from_step(step),
+            }],
+        })
+
+        history.append({
+            "role": "assistant",
+            "content": [{
+                "type": "text",
+                "text": _history_answer_from_step(step, object_name=object_name),
+            }],
+        })
 
     return system_msgs + history
 
@@ -629,18 +852,56 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     return expanded
 
+# def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
+#     seen = set()
+#     for doc in dataset:
+#         video_path = doc.get("video_path")
+#         query_time = doc.get("query_time_sec")
+#         if not video_path or query_time is None:
+#             continue
+#         key = (video_path, float(query_time))
+#         if key in seen:
+#             continue
+#         seen.add(key)
+#         _extract_prefix_video(video_path, float(query_time))
 def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
     seen = set()
+
     for doc in dataset:
         video_path = doc.get("video_path")
         query_time = doc.get("query_time_sec")
         if not video_path or query_time is None:
             continue
-        key = (video_path, float(query_time))
+
+        query_time = float(query_time)
+
+        if _needs_anchor_marker(doc):
+            marker_xy = _get_anchor_marker_xy_norm(doc)
+            if marker_xy is not None:
+                key = (
+                    "marked",
+                    video_path,
+                    query_time,
+                    round(float(marker_xy[0]), 2),
+                    round(float(marker_xy[1]), 2),
+                )
+                if key not in seen:
+                    seen.add(key)
+                    meta = doc.get("answer_metadata") or {}
+                    marker_label = meta.get("object_y_name") or "marked object"
+                    _extract_marked_prefix_video(
+                        video_path,
+                        query_time,
+                        marker_xy,
+                        marker_label=marker_label,
+                    )
+                continue
+
+        key = ("prefix", video_path, query_time)
         if key in seen:
             continue
         seen.add(key)
-        _extract_prefix_video(video_path, float(query_time))
+        _extract_prefix_video(video_path, query_time)
 
 
 def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
@@ -670,25 +931,57 @@ def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
 
     return datasets.Dataset.from_list(expanded_rows)
 
+def _get_system_prompt(lmms_eval_specific_kwargs=None) -> str:
+    kwargs = lmms_eval_specific_kwargs or {}
+    return kwargs["system_prompt"]
+
+# def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
+#     if os.getenv("OOS_NO_VIDEO_INPUT", "0") == "1":
+#         return []
+#     video_path = doc.get("video_path")
+#     if not video_path:
+#         raise ValueError(f"Missing video_path for doc id={doc.get('id')}")
+#     query_time_sec = float(doc.get("query_time_sec", 0.0))
+#     prefix_path = _extract_prefix_video(video_path, query_time_sec)
+#     return [prefix_path]
 
 def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
     if os.getenv("OOS_NO_VIDEO_INPUT", "0") == "1":
         return []
+
     video_path = doc.get("video_path")
     if not video_path:
         raise ValueError(f"Missing video_path for doc id={doc.get('id')}")
+
     query_time_sec = float(doc.get("query_time_sec", 0.0))
+
+    if _needs_anchor_marker(doc):
+        marker_xy_norm = _get_anchor_marker_xy_norm(doc)
+        if marker_xy_norm is not None:
+            meta = doc.get("answer_metadata") or {}
+            marker_label = meta.get("object_y_name") or "marked object"
+
+            return [
+                _extract_marked_prefix_video(
+                    video_path,
+                    query_time_sec,
+                    marker_xy_norm,
+                    marker_label=marker_label,
+                )
+            ]
+
+        eval_logger.warning(
+            f"Anchor marker requested but no valid object_y pixel found for doc id={doc.get('id')}"
+        )
+
     prefix_path = _extract_prefix_video(video_path, query_time_sec)
     return [prefix_path]
 
 
 def oos_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> str:
-    kwargs = lmms_eval_specific_kwargs or {}
-    pre_prompt = kwargs.get("pre_prompt", "") or (
-        "You are a helpful assistant trained to answer spatial and visual questions based on egocentric videos."
-    )
+    system_prompt = _get_system_prompt(lmms_eval_specific_kwargs)
 
-    lines: List[str] = [pre_prompt]
+    lines: List[str] = [system_prompt]
 
     if doc.get("history_messages"):
         lines.append("Conversation history:")
@@ -704,10 +997,7 @@ def oos_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> str:
 
 
 def oos_doc_to_messages(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> List[Dict[str, Any]]:
-    kwargs = lmms_eval_specific_kwargs or {}
-    system_prompt = kwargs.get("system_prompt") or (
-        "You are a helpful assistant trained to answer spatial and visual questions based on egocentric videos."
-    )
+    system_prompt = _get_system_prompt(lmms_eval_specific_kwargs)
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
     ]

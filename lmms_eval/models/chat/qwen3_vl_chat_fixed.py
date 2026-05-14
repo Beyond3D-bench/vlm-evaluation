@@ -6,6 +6,11 @@ from collections import defaultdict
 from loguru import logger as eval_logger
 from tqdm import tqdm
 
+from concurrent.futures import ThreadPoolExecutor
+import gc
+import torch
+import re
+
 from lmms_eval import utils
 from lmms_eval.api.instance import GenerationResult, Instance, TokenCounts
 from lmms_eval.api.registry import register_model
@@ -24,13 +29,13 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
     is_simple = False
 
     def _debug_enabled(self) -> bool:
-        return os.getenv("OOS_CHAT_DEBUG", "1") == "1"
+        return os.getenv("OOS_CHAT_DEBUG", "0") == "1"
 
     def _dbg(self, msg: str) -> None:
         if self._debug_enabled():
             print(msg, flush=True)
 
-    def _content_preview(self, content: List[Dict], max_text_chars: int = 120) -> str:
+    def _content_preview(self, content: List[Dict], max_text_chars: int = 2000) -> str:
         parts = []
         for item in content:
             ctype = item.get("type")
@@ -172,36 +177,147 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
             self._dbg(f"[VISUALS RAW] {visuals}")
             self._dbg(f"[VISUALS PROTOCOL] {visual_content}")
 
+            # system prompt + previous history (if any) + videos + current question 
+            # if visual_content:
+            #     last_user_idx = None
+            #     for i in range(len(messages) - 1, -1, -1):
+            #         if messages[i]["role"] == "user":
+            #             last_user_idx = i
+            #             break
+
+            #     if last_user_idx is None:
+            #         messages.append(
+            #             {"role": "user", "content": visual_content + [{"type": "text", "text": ctx}]}
+            #         )
+            #         last_user_idx = len(messages) - 1
+            #     else:
+            #         messages[last_user_idx]["content"] = (
+            #             visual_content + messages[last_user_idx]["content"]
+            #         )
+
+            #     self._dbg(f"[VIDEO ATTACH] attached_to_user_idx={last_user_idx}")
+            #     self._dbg(
+            #         f"[VIDEO ATTACH] final_user_types="
+            #         f"{[c.get('type') for c in messages[last_user_idx]['content']]}"
+            #     )
+
+            #     attached_videos = [
+            #         c.get("url") for c in messages[last_user_idx]["content"] if c.get("type") == "video"
+            #     ]
+            #     self._dbg(f"[VIDEO ATTACH] attached_video_urls={attached_videos}")
+
+            #     if not attached_videos:
+            #         self._dbg("[WARNING] No video attached to final user turn.")
+            # else:
+            #     self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
+
+            # video + flattened previous hostory + current step question
+            # if visual_content:
+            #     # Flatten previous chat history and current question into one final user turn:
+            #     # user content = [video] + [previous-step text + current-step text]
+
+            #     system_msgs = [m for m in messages if m.get("role") == "system"]
+            #     non_system_msgs = [m for m in messages if m.get("role") != "system"]
+
+            #     def _text_from_content(content):
+            #         return "\n".join(
+            #             str(part.get("text", ""))
+            #             for part in content
+            #             if part.get("type") == "text" and str(part.get("text", "")).strip()
+            #         ).strip()
+
+            #     # The last user message should be the current step question.
+            #     last_user_idx = None
+            #     for i in range(len(non_system_msgs) - 1, -1, -1):
+            #         if non_system_msgs[i].get("role") == "user":
+            #             last_user_idx = i
+            #             break
+
+            #     if last_user_idx is None:
+            #         current_text = ctx
+            #         history_msgs = non_system_msgs
+            #     else:
+            #         current_text = _text_from_content(non_system_msgs[last_user_idx].get("content", []))
+            #         history_msgs = non_system_msgs[:last_user_idx]
+
+            #     history_lines = []
+            #     pair_no = 1
+            #     pending_question = None
+
+            #     for msg in history_msgs:
+            #         role = msg.get("role")
+            #         text = _text_from_content(msg.get("content", []))
+            #         if not text:
+            #             continue
+
+            #         if role == "user":
+            #             pending_question = text
+            #         elif role == "assistant":
+            #             if pending_question is not None:
+            #                 history_lines.append(f"Previous step {pair_no} question:\n{pending_question}")
+            #                 history_lines.append(f"Previous step {pair_no} answer:\n{text}")
+            #                 pair_no += 1
+            #                 pending_question = None
+            #             else:
+            #                 history_lines.append(f"Previous assistant answer:\n{text}")
+
+            #     # If there is an unmatched previous user message, keep it as context.
+            #     if pending_question is not None:
+            #         history_lines.append(f"Previous step question:\n{pending_question}")
+
+            #     merged_text_parts = []
+            #     if history_lines:
+            #         merged_text_parts.append("Previous steps:")
+            #         merged_text_parts.append("\n\n".join(history_lines))
+
+            #     merged_text_parts.append("Current step:")
+            #     merged_text_parts.append(current_text or ctx)
+
+            #     merged_text = "\n\n".join(merged_text_parts)
+
+            #     messages = system_msgs + [
+            #         {
+            #             "role": "user",
+            #             "content": visual_content + [{"type": "text", "text": merged_text}],
+            #         }
+            #     ]
+
+            #     self._dbg("[VIDEO ATTACH OPTION 1] flattened into one user turn")
+            #     self._dbg(
+            #         f"[VIDEO ATTACH OPTION 1] final_user_types="
+            #         f"{[c.get('type') for c in messages[-1]['content']]}"
+            #     )
+            # else:
+            #     self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
+
+            # video + previous history (chat turns) + current step question
             if visual_content:
-                last_user_idx = None
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i]["role"] == "user":
-                        last_user_idx = i
+                system_msgs = [m for m in messages if m.get("role") == "system"]
+                non_system_msgs = [m for m in messages if m.get("role") != "system"]
+
+                first_user_idx = None
+                for i, msg in enumerate(non_system_msgs):
+                    if msg.get("role") == "user":
+                        first_user_idx = i
                         break
 
-                if last_user_idx is None:
-                    messages.append(
-                        {"role": "user", "content": visual_content + [{"type": "text", "text": ctx}]}
-                    )
-                    last_user_idx = len(messages) - 1
+                if first_user_idx is None:
+                    non_system_msgs = [{
+                        "role": "user",
+                        "content": visual_content + [{"type": "text", "text": ctx}],
+                    }]
                 else:
-                    messages[last_user_idx]["content"] = (
-                        visual_content + messages[last_user_idx]["content"]
+                    non_system_msgs[first_user_idx]["content"] = (
+                        visual_content + non_system_msgs[first_user_idx]["content"]
                     )
 
-                self._dbg(f"[VIDEO ATTACH] attached_to_user_idx={last_user_idx}")
+                messages = system_msgs + non_system_msgs
+
+                self._dbg("[VIDEO ATTACH] attached video to first user text turn")
                 self._dbg(
-                    f"[VIDEO ATTACH] final_user_types="
-                    f"{[c.get('type') for c in messages[last_user_idx]['content']]}"
+                    f"[VIDEO ATTACH] first_user_types="
+                    f"{[c.get('type') for c in non_system_msgs[first_user_idx]['content']]}"
                 )
-
-                attached_videos = [
-                    c.get("url") for c in messages[last_user_idx]["content"] if c.get("type") == "video"
-                ]
-                self._dbg(f"[VIDEO ATTACH] attached_video_urls={attached_videos}")
-
-                if not attached_videos:
-                    self._dbg("[WARNING] No video attached to final user turn.")
             else:
                 self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
 
@@ -243,8 +359,8 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
                     self._dbg(f"    [HF VIDEO] {item.get('video')}")
                 elif item.get("type") == "text":
                     text = str(item.get("text", "")).replace("\n", " ").strip()
-                    if len(text) > 120:
-                        text = text[:120] + "..."
+                    if len(text) > 2000:
+                        text = text[:2000] + "..."
                     self._dbg(f"    [HF TEXT] {text}")
 
         text_prompt = self._apply_chat_template([hf_messages])[0]
@@ -397,16 +513,95 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
                     step_id = str(doc.get("step"))
                     source_name = getattr(doc_to_source, "__name__", "")
 
-                    if "doc_to_messages" in source_name:
-                        msgs = doc_to_source(doc)
-                        user_msg = msgs[-1]
-                    else:
-                        user_msg = {
-                            "role": "user",
-                            "content": [{"type": "text", "text": doc.get("question", "")}],
-                        }
+                    # if "doc_to_messages" in source_name:
+                    #     msgs = doc_to_source(doc)
+                    #     user_msg = msgs[-1]
+                    # else:
+                    #     user_msg = {
+                    #         "role": "user",
+                    #         "content": [{"type": "text", "text": doc.get("question", "")}],
+                    #     }
 
-                    self._pred_history[traj_id][step_id] = (user_msg, cleaned_ans)         
+                    # self._pred_history[traj_id][step_id] = (user_msg, cleaned_ans)       
+                    question_text = str(doc.get("question", "")).strip()
+
+                    choices = doc.get("choices") or []
+                    if choices:
+                        choice_lines = "\n".join(
+                            f"{chr(ord('A') + j)}. {choice}"
+                            for j, choice in enumerate(choices)
+                        )
+                        question_text = f"{question_text}\nOptions:\n{choice_lines}"
+
+                    user_msg = {
+                        "role": "user",
+                        "content": [{"type": "text", "text": question_text}],
+                    }
+
+
+                    def _format_answer_for_history(doc, answer_text: str) -> str:
+                        answer_text = str(answer_text).strip()
+                        qclass = str(doc.get("step_question_class", "")).strip().lower()
+                        obj_name = str(doc.get("object_a_name", "the object")).strip() or "the object"
+
+                        # Convert multiple-choice letter to semantic choice text.
+                        choices = doc.get("choices") or []
+                        if choices:
+                            letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:len(choices)]
+                            m = re.search(
+                                rf"(?:final answer|answer)?\s*[:\-]?\s*([{letters}])\b",
+                                answer_text,
+                                flags=re.I,
+                            )
+                            if m:
+                                idx = ord(m.group(1).upper()) - ord("A")
+                                if 0 <= idx < len(choices):
+                                    return str(choices[idx])
+
+                            # Also handle exact single-letter output like "B".
+                            pred = answer_text.strip().upper()
+                            if len(pred) == 1 and pred in letters:
+                                idx = ord(pred) - ord("A")
+                                if 0 <= idx < len(choices):
+                                    return str(choices[idx])
+
+                            return answer_text
+
+                        # Convert structured time/point answer to a clearer sentence.
+                        m = re.search(
+                            r"(<TIME\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+video\s+\d+>)"
+                            r"\s*;\s*Point=\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)",
+                            answer_text,
+                            flags=re.I,
+                        )
+
+                        if m:
+                            time_token = m.group(1)
+                            x = m.group(2)
+                            y = m.group(3)
+
+                            if qclass == "oos_step2_last_visible":
+                                return (
+                                    f"{obj_name} was last visible at {time_token}, "
+                                    f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
+                                )
+
+                            if qclass == "oos_step3_last_placement":
+                                return (
+                                    f"{obj_name} stopped moving at {time_token}, "
+                                    f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
+                                )
+
+                            return (
+                                f"The answer is {time_token}, at normalized image coordinates "
+                                f"(x={x}, y={y}), where x and y are in [0, 1]."
+                            )
+
+                        return answer_text
+
+
+                    history_answer = _format_answer_for_history(doc, cleaned_ans)
+                    self._pred_history[traj_id][step_id] = (user_msg, history_answer)
 
                 print("\n" + "=" * 80)
                 print(f"[RAW OUTPUT]")

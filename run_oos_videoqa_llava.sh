@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=oos_videoqa
 #SBATCH --account=3dv
-#SBATCH --time=03:00:00
+#SBATCH --time=00:60:00
 #SBATCH --output=/work/courses/3dv/team1/lmms-eval/logs/oos_videoqa_%j.out
 #SBATCH --error=/work/courses/3dv/team1/lmms-eval/logs/oos_videoqa_%j.err
 
@@ -18,7 +18,7 @@ mkdir -p $PROJECT_DIR/hf_cache/datasets
 cd $CODE_DIR
 
 # Activate virtual environment
-source .venv/bin/activate
+source /work/courses/3dv/team1/llava15_env/bin/activate
 
 set -a
 source "$CODE_DIR/.env"
@@ -44,8 +44,14 @@ export FORCE_QWENVL_VIDEO_READER=decord
 export TMPDIR=$PROJECT_DIR/tmp
 mkdir -p $TMPDIR
 
+# 
+OOS_VIDEO_ATTACH_MODE=first_user
+
+
 # If your utils.py supports remapping video paths by basename, keep this:
 # export OOS_VIDEO_BASE_DIR=$CODE_DIR/videos
+export OOS_VIDEO_CACHE_DIR=/work/courses/3dv/team1/tmp/oos_video_cache_168
+mkdir -p "$OOS_VIDEO_CACHE_DIR"
 
 # step 2 (last visible) and 3 (last placement) tolerance
 export OOS_TIME_TOLERANCE_SEC=3.0
@@ -54,11 +60,15 @@ export OOS_COORD_TOLERANCE_NORM=0.2
 # Video ablation switch 
 export OOS_NO_VIDEO_INPUT="1"
 
-# History mode: "gold" uses gold history, "none" uses no history, "pred" uses predicted history (if available)
-export OOS_HISTORY_MODE="pred"  # "gold", "none", "pred"
+# Video dimensions
+export OOS_VIDEO_WIDTH=224
+export OOS_VIDEO_HEIGHT=224
 
-#Comment this out to Evaluate single step if wanted ()
-# export OOS_DEBUG_STEP=1
+# History mode: "gold" uses gold history, "none" uses no history, "pred" uses predicted history (if available)
+export OOS_HISTORY_MODE="gold"  # "gold", "none", "pred"
+
+# Comment this out to Evaluate single step if wanted ()
+# export OOS_DEBUG_STEP=2
 
 # Shuffle option (make sure it is set to "0" if using "pred" history mode to ensure alignment between predicted history and current evaluation)
 export LMMS_EVAL_SHUFFLE_DOCS="0"
@@ -67,24 +77,21 @@ export LMMS_EVAL_SHUFFLE_DOCS="0"
 # Set to 0 to disable these debug logs.
 export OOS_CHAT_DEBUG="1"
 
-# Video dimensions
-export OOS_VIDEO_WIDTH=224
-export OOS_VIDEO_HEIGHT=224
-
 # Debugging options (set to "1" to prompt the VLM to ouput reasoning instead of final answer directly)
 export OOS_DEBUG_REASONING="0"
 export OOS_DEBUG_EVAL="0"
 export OOS_DEBUG_FAIL_ONLY="0"
 
-# Preprocessing options (not needed if you already have preprocessed the videos beforehand)
+# Preprocessing options
 export OOS_PREPROCESS_VIDEO="0"
 export OOS_TARGET_FPS=1
 export OOS_RESIZE_WIDTH=224
 export OOS_RESIZE_HEIGHT=224
 
-export CUDA_LAUNCH_BLOCKING=1
+unset CUDA_LAUNCH_BLOCKING
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 
 # srun python -m lmms_eval \
 #   --model qwen2_5_vl \
@@ -96,19 +103,19 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # srun python -m lmms_eval \
 #   --model qwen3_vl_chat_fixed \
-#   --model_args pretrained=Qwen/Qwen3-VL-4B-Instruct,fps=1,max_num_frames=1200,min_pixels=28224,max_pixels=28224 \
+#   --model_args pretrained=Qwen/Qwen3-VL-4B-Instruct,max_num_frames=768,min_pixels=50176 \
 #   --tasks oos_videoqa \
 #   --batch_size 1 \
 #   --log_samples \
 #   --output_path "$PROJECT_DIR/lmms-eval/outputs/oos_videoqa"
 
 srun python -m lmms_eval \
-  --model qwen3_5 \
-  --model_args pretrained=Qwen/Qwen3.5-2B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
-  --tasks oos_videoqa \
-  --batch_size 1 \
+  --model=llava_onevision1_5_chat_fixed \
+  --model_args=pretrained=lmms-lab/LLaVA-OneVision-1.5-8B-Instruct,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,load_in_4bit=True \
+  --tasks=oos_videoqa \
+  --batch_size=1 \
   --log_samples \
-  --output_path "$PROJECT_DIR/lmms-eval/outputs/oos_videoqa"
+  --output_path="$PROJECT_DIR/lmms-eval/outputs/oos_videoqa/llava_onevision1_5_chat_fixed"
 
 
 

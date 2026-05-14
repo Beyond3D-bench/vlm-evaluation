@@ -58,6 +58,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "llava_sglang": "LlavaSglang",
     "llava_vid": "LlavaVid",
     "llava": "Llava",
+    "litellm": "LiteLLMCompatible",
     "longva": "LongVA",
     "mantis": "Mantis",
     "minicpm_o": "MiniCPM_O",
@@ -122,6 +123,7 @@ AVAILABLE_CHAT_TEMPLATE_MODELS = {
     "vllm_generate": "VLLMGenerate",
     "sglang": "Sglang",
     "huggingface": "Huggingface",
+    "litellm_chat": "LiteLLMChatCompatible",
     "async_openai": "AsyncOpenAIChat",
     "async_hf_model": "AsyncHFModel",
     "longvila": "LongVila",
@@ -134,6 +136,7 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "openai": ("openai_compatible", "openai_compatible_chat"),
     "async_openai": ("async_openai_compatible_chat", "async_openai_compatible"),
     "async_hf_model": ("async_hf",),
+    "litellm": ("litellm_compatible"),
 }
 
 

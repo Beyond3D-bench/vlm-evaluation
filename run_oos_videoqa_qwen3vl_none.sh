@@ -52,13 +52,13 @@ export OOS_TIME_TOLERANCE_SEC=3.0
 export OOS_COORD_TOLERANCE_NORM=0.2
 
 # Video ablation switch 
-export OOS_NO_VIDEO_INPUT="1"
+export OOS_NO_VIDEO_INPUT="0"
 
 # History mode: "gold" uses gold history, "none" uses no history, "pred" uses predicted history (if available)
-export OOS_HISTORY_MODE="pred"  # "gold", "none", "pred"
+export OOS_HISTORY_MODE="none"  # "gold", "none", "pred"
 
 #Comment this out to Evaluate single step if wanted ()
-# export OOS_DEBUG_STEP=1
+export OOS_DEBUG_STEP=1
 
 # Shuffle option (make sure it is set to "0" if using "pred" history mode to ensure alignment between predicted history and current evaluation)
 export LMMS_EVAL_SHUFFLE_DOCS="0"
@@ -94,21 +94,21 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 #   --log_samples \
 #   --output_path "$PROJECT_DIR/lmms-eval/outputs/oos_videoqa"
 
-# srun python -m lmms_eval \
-#   --model qwen3_vl_chat_fixed \
-#   --model_args pretrained=Qwen/Qwen3-VL-4B-Instruct,fps=1,max_num_frames=1200,min_pixels=28224,max_pixels=28224 \
-#   --tasks oos_videoqa \
-#   --batch_size 1 \
-#   --log_samples \
-#   --output_path "$PROJECT_DIR/lmms-eval/outputs/oos_videoqa"
-
 srun python -m lmms_eval \
-  --model qwen3_5 \
-  --model_args pretrained=Qwen/Qwen3.5-2B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
+  --model qwen3_vl_chat_fixed \
+  --model_args pretrained=Qwen/Qwen3-VL-4B-Instruct,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416 \
   --tasks oos_videoqa \
   --batch_size 1 \
   --log_samples \
   --output_path "$PROJECT_DIR/lmms-eval/outputs/oos_videoqa"
+
+# srun python -m lmms_eval \
+#   --model qwen3_5 \
+#   --model_args pretrained=Qwen/Qwen3.5-2B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
+#   --tasks oos_videoqa \
+#   --batch_size 1 \
+#   --log_samples \
+#   --output_path "$PROJECT_DIR/lmms-eval/outputs/oos_videoqa"
 
 
 

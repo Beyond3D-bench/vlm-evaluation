@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=oos_videoqa
 #SBATCH --account=3dv
-#SBATCH --time=03:00:00
+#SBATCH --time=05:00:00
 #SBATCH --output=/work/courses/3dv/team1/lmms-eval/logs/oos_videoqa_%j.out
 #SBATCH --error=/work/courses/3dv/team1/lmms-eval/logs/oos_videoqa_%j.err
 
@@ -52,10 +52,10 @@ export OOS_TIME_TOLERANCE_SEC=3.0
 export OOS_COORD_TOLERANCE_NORM=0.2
 
 # Video ablation switch 
-export OOS_NO_VIDEO_INPUT="1"
+export OOS_NO_VIDEO_INPUT="0"
 
 # History mode: "gold" uses gold history, "none" uses no history, "pred" uses predicted history (if available)
-export OOS_HISTORY_MODE="pred"  # "gold", "none", "pred"
+export OOS_HISTORY_MODE="gold"  # "gold", "none", "pred"
 
 #Comment this out to Evaluate single step if wanted ()
 # export OOS_DEBUG_STEP=1
@@ -104,7 +104,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 srun python -m lmms_eval \
   --model qwen3_5 \
-  --model_args pretrained=Qwen/Qwen3.5-2B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
+  --model_args pretrained=Qwen/Qwen3.5-9B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
   --tasks oos_videoqa \
   --batch_size 1 \
   --log_samples \

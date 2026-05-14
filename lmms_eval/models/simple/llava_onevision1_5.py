@@ -1,7 +1,7 @@
 import re
 from typing import List, Optional, Tuple, Union
 
-import decord
+
 import numpy as np
 import torch
 from accelerate import Accelerator, DistributedType
@@ -9,6 +9,8 @@ from loguru import logger as eval_logger
 from PIL import Image
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+# from transformers import AutoProcessor, AutoTokenizer, AutoConfig
+# from transformers import LlavaOnevisionForConditionalGeneration
 import transformers.cache_utils as cu
 
 from lmms_eval import utils
@@ -39,7 +41,9 @@ class Llava_OneVision1_5(lmms):
         attn_implementation: Optional[str] = None,
         min_pixels: int = 256 * 28 * 28,
         max_pixels: int = 1605632,
+        total_pixels: Optional[int] = None,
         max_num_frames: int = 32,
+        fps: Optional[float] = None,
         system_prompt: Optional[str] = "You are a helpful assistant.",
         interleave_visuals: Optional[bool] = False,
         image_first: Optional[bool] = True,
@@ -77,6 +81,26 @@ class Llava_OneVision1_5(lmms):
             "device_map": self.device_map,
             "trust_remote_code": True,
         }
+        load_in_8bit = str(kwargs.pop("load_in_8bit", "False")).lower() == "true"
+        load_in_4bit = str(kwargs.pop("load_in_4bit", "False")).lower() == "true"
+
+        if load_in_4bit or load_in_8bit:
+            from transformers import BitsAndBytesConfig
+
+            # Usually better to avoid forcing torch_dtype when using bitsandbytes
+            model_kwargs.pop("torch_dtype", None)
+
+            if load_in_4bit:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                )
+            else:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
 
         # Add revision if specified
         if revision is not None:
@@ -131,6 +155,8 @@ class Llava_OneVision1_5(lmms):
         self.max_pixels = max_pixels
         self.min_pixels = min_pixels
         self.max_num_frames = max_num_frames
+        self.total_pixels = total_pixels
+        self.fps = fps
         self.image_first = image_first
         if reasoning_prompt:
             self.reasoning_prompt = reasoning_prompt.replace("\\n", "\n")
@@ -143,6 +169,12 @@ class Llava_OneVision1_5(lmms):
             trust_remote_code=True,
         )
         self._tokenizer = AutoTokenizer.from_pretrained(pretrained, trust_remote_code=True)
+        # DEBUG LOGS 
+        eval_logger.info(f"Loaded model class: {type(self._model)}")
+        eval_logger.info(f"Config class: {type(self._model.config)}")
+        eval_logger.info(f"hf_device_map: {getattr(self._model, 'hf_device_map', None)}")
+        eval_logger.info(f"vocab size (config): {getattr(self._model.config, 'vocab_size', None)}")
+        eval_logger.info(f"tokenizer length: {len(self._tokenizer)}")
         self.system_prompt = system_prompt
         self.interleave_visuals = interleave_visuals
 
@@ -168,6 +200,25 @@ class Llava_OneVision1_5(lmms):
         else:
             self._rank = 0
             self._world_size = 1
+
+    def _build_video_kwargs(self):
+        """Build video processing kwargs using the same policy as Qwen3_VL."""
+        video_kwargs = {"min_pixels": self.min_pixels}
+
+        if self.fps is not None:
+            video_kwargs["fps"] = self.fps
+            video_kwargs["max_frames"] = self.max_num_frames
+        elif self.total_pixels is not None:
+            video_kwargs["max_frames"] = self.max_num_frames
+        else:
+            video_kwargs["nframes"] = self.max_num_frames
+
+        if self.total_pixels is not None:
+            video_kwargs["total_pixels"] = self.total_pixels
+        else:
+            video_kwargs["max_pixels"] = self.max_pixels
+
+        return video_kwargs
 
     @property
     def config(self):
@@ -277,16 +328,15 @@ class Llava_OneVision1_5(lmms):
                 processed_visuals = []
                 for visual in visual_list[i]:
                     if isinstance(visual, str) and visual.endswith((".mp4", ".avi", ".mov")):  # Video file
-                        vr = decord.VideoReader(visual)
-                        first_frame = vr[0].asnumpy()
-                        height, width = first_frame.shape[:2]
+                        # vr = decord.VideoReader(visual)
+                        # first_frame = vr[0].asnumpy()
+                        # height, width = first_frame.shape[:2]
                         # max_pixels = height * width
                         processed_visuals.append(
                             {
                                 "type": "video",
                                 "video": visual,
-                                "max_pixels": self.max_pixels,
-                                "min_pixels": self.min_pixels,
+                                **self._build_video_kwargs(),
                             }
                         )
                     elif isinstance(visual, Image.Image):
@@ -332,18 +382,24 @@ class Llava_OneVision1_5(lmms):
                 batched_messages.append(message)
 
             texts = [self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in batched_messages]
-            image_inputs, video_inputs = process_vision_info(batched_messages)
+            image_inputs, video_inputs, processed_video_kwargs = process_vision_info(
+                batched_messages,   # or hf_messages_list in chat_fixed
+                return_video_kwargs=True,
+                image_patch_size=14,
+                return_video_metadata=True,
+            )
+
+            video_metadata_list = None
             if video_inputs is not None:
-                total_frames = video_inputs[0].shape[0]
-                indices = np.linspace(0, total_frames - 1, self.max_num_frames, dtype=int)
-                # Append the last frame index if not already included
-                if total_frames - 1 not in indices:
-                    indices = np.append(indices, total_frames - 1)
-                video_inputs[0] = video_inputs[0][indices]
+                video_inputs, video_metadata_list = map(list, zip(*video_inputs))
+
             inputs = self.processor(
                 text=texts,
                 images=image_inputs,
                 videos=video_inputs,
+                video_metadata=video_metadata_list,
+                **processed_video_kwargs,
+                do_resize=False,
                 padding=True,
                 return_tensors="pt",
             )
