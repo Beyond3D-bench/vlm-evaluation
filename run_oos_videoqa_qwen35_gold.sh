@@ -104,7 +104,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 srun python -m lmms_eval \
   --model qwen3_5 \
-  --model_args pretrained=Qwen/Qwen3.5-9B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
+  --model_args pretrained=Qwen/Qwen3.5-4B,fps=1,max_num_frames=800,min_pixels=38416,max_pixels=38416,enable_thinking=False \
   --tasks oos_videoqa \
   --batch_size 1 \
   --log_samples \

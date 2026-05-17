@@ -32,8 +32,8 @@ metric_list:
 
 lmms_eval_specific_kwargs:
   default:
-    system_prompt: "You are a helpful assistant trained to answer spatial and visual questions based on egocentric videos. The videos are captured from a first-person perspective and may contain various objects and interactions. Use the video to answer the question. The video is sampled at 1 frame per second."
-
+    #system_prompt: "You are a helpful assistant trained to answer spatial and visual questions based on egocentric videos. The videos are captured from a first-person perspective and may contain various objects and interactions. Use the video to answer the question. The video is sampled at 1 frame per second."
+    system_prompt: ""
 metadata:
   version: 0.4
   mode: multi_turn_chat_mixed

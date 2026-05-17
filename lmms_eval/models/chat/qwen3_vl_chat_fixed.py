@@ -178,38 +178,38 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
             self._dbg(f"[VISUALS PROTOCOL] {visual_content}")
 
             # system prompt + previous history (if any) + videos + current question 
-            # if visual_content:
-            #     last_user_idx = None
-            #     for i in range(len(messages) - 1, -1, -1):
-            #         if messages[i]["role"] == "user":
-            #             last_user_idx = i
-            #             break
+            if visual_content:
+                last_user_idx = None
+                for i in range(len(messages) - 1, -1, -1):
+                    if messages[i]["role"] == "user":
+                        last_user_idx = i
+                        break
 
-            #     if last_user_idx is None:
-            #         messages.append(
-            #             {"role": "user", "content": visual_content + [{"type": "text", "text": ctx}]}
-            #         )
-            #         last_user_idx = len(messages) - 1
-            #     else:
-            #         messages[last_user_idx]["content"] = (
-            #             visual_content + messages[last_user_idx]["content"]
-            #         )
+                if last_user_idx is None:
+                    messages.append(
+                        {"role": "user", "content": visual_content + [{"type": "text", "text": ctx}]}
+                    )
+                    last_user_idx = len(messages) - 1
+                else:
+                    messages[last_user_idx]["content"] = (
+                        visual_content + messages[last_user_idx]["content"]
+                    )
 
-            #     self._dbg(f"[VIDEO ATTACH] attached_to_user_idx={last_user_idx}")
-            #     self._dbg(
-            #         f"[VIDEO ATTACH] final_user_types="
-            #         f"{[c.get('type') for c in messages[last_user_idx]['content']]}"
-            #     )
+                self._dbg(f"[VIDEO ATTACH] attached_to_user_idx={last_user_idx}")
+                self._dbg(
+                    f"[VIDEO ATTACH] final_user_types="
+                    f"{[c.get('type') for c in messages[last_user_idx]['content']]}"
+                )
 
-            #     attached_videos = [
-            #         c.get("url") for c in messages[last_user_idx]["content"] if c.get("type") == "video"
-            #     ]
-            #     self._dbg(f"[VIDEO ATTACH] attached_video_urls={attached_videos}")
+                attached_videos = [
+                    c.get("url") for c in messages[last_user_idx]["content"] if c.get("type") == "video"
+                ]
+                self._dbg(f"[VIDEO ATTACH] attached_video_urls={attached_videos}")
 
-            #     if not attached_videos:
-            #         self._dbg("[WARNING] No video attached to final user turn.")
-            # else:
-            #     self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
+                if not attached_videos:
+                    self._dbg("[WARNING] No video attached to final user turn.")
+            else:
+                self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
 
             # video + flattened previous hostory + current step question
             # if visual_content:
@@ -290,36 +290,36 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
             # else:
             #     self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
 
-            # video + previous history (chat turns) + current step question
-            if visual_content:
-                system_msgs = [m for m in messages if m.get("role") == "system"]
-                non_system_msgs = [m for m in messages if m.get("role") != "system"]
+            # # video + previous history (chat turns) + current step question
+            # if visual_content:
+            #     system_msgs = [m for m in messages if m.get("role") == "system"]
+            #     non_system_msgs = [m for m in messages if m.get("role") != "system"]
 
-                first_user_idx = None
-                for i, msg in enumerate(non_system_msgs):
-                    if msg.get("role") == "user":
-                        first_user_idx = i
-                        break
+            #     first_user_idx = None
+            #     for i, msg in enumerate(non_system_msgs):
+            #         if msg.get("role") == "user":
+            #             first_user_idx = i
+            #             break
 
-                if first_user_idx is None:
-                    non_system_msgs = [{
-                        "role": "user",
-                        "content": visual_content + [{"type": "text", "text": ctx}],
-                    }]
-                else:
-                    non_system_msgs[first_user_idx]["content"] = (
-                        visual_content + non_system_msgs[first_user_idx]["content"]
-                    )
+            #     if first_user_idx is None:
+            #         non_system_msgs = [{
+            #             "role": "user",
+            #             "content": visual_content + [{"type": "text", "text": ctx}],
+            #         }]
+            #     else:
+            #         non_system_msgs[first_user_idx]["content"] = (
+            #             visual_content + non_system_msgs[first_user_idx]["content"]
+            #         )
 
-                messages = system_msgs + non_system_msgs
+            #     messages = system_msgs + non_system_msgs
 
-                self._dbg("[VIDEO ATTACH] attached video to first user text turn")
-                self._dbg(
-                    f"[VIDEO ATTACH] first_user_types="
-                    f"{[c.get('type') for c in non_system_msgs[first_user_idx]['content']]}"
-                )
-            else:
-                self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
+            #     self._dbg("[VIDEO ATTACH] attached video to first user text turn")
+            #     self._dbg(
+            #         f"[VIDEO ATTACH] first_user_types="
+            #         f"{[c.get('type') for c in non_system_msgs[first_user_idx]['content']]}"
+            #     )
+            # else:
+            #     self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")
 
         else:
             visuals = doc_to_source(doc)
