@@ -5,9 +5,10 @@ __pycache__
 *.isorted
 
 # Virtual environments
-env
-venv
-.venv
+env/
+venv/
+.venv/
+.venv*/
 
 # Build artifacts
 build
@@ -72,6 +73,7 @@ SimSun.ttf
 scripts/
 workspace/
 docs/plans/
+legacy_launchers/
 
 # Agent / AI assistant memory files (user-local, not tracked), we encourage users to design their own agents, and can use our provided skills as reference.
 AGENTS.md

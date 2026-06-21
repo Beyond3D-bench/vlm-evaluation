@@ -222,6 +222,19 @@ class Llava_OneVision1_5_Chat_Fixed(LlavaOneVisionSimple):
                 doc = self.task_dict[task][split][ids]
                 messages = doc_to_messages[0](doc)
 
+                def _messages_have_media(messages):
+                    for msg in messages:
+                        content = msg.get("content")
+                        if not isinstance(content, list):
+                            continue
+                        if any(
+                            item.get("type") in {"image", "video"}
+                            for item in content
+                            if isinstance(item, dict)
+                        ):
+                            return True
+                    return False
+
                 if pred_mode:
                     self._init_pred_history()
 
@@ -263,8 +276,11 @@ class Llava_OneVision1_5_Chat_Fixed(LlavaOneVisionSimple):
                         f"types={[c.get('type') for c in msg.get('content', [])] if isinstance(msg.get('content'), list) else type(msg.get('content'))} "
                         f"{self._content_preview(msg.get('content'))}"
                     )
+                has_embedded_media = _messages_have_media(messages)
                 bound_task = getattr(doc_to_messages[0], "__self__", None)
-                if bound_task is not None and hasattr(bound_task, "doc_to_visual"):
+                if has_embedded_media:
+                    self._dbg("[VISUALS EMBEDDED] using media from doc_to_messages")
+                elif bound_task is not None and hasattr(bound_task, "doc_to_visual"):
                     visuals = bound_task.doc_to_visual(doc)
                     visual_content = []
 

@@ -1,7 +1,8 @@
+import os
 import time
 import warnings
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from accelerate import Accelerator, DistributedType
@@ -57,6 +58,35 @@ class InternVLHf(lmms):
 
     is_simple = False
 
+    def _debug_enabled(self) -> bool:
+        return os.getenv("OOS_CHAT_DEBUG", "0") == "1"
+
+    def _dbg(self, msg: str) -> None:
+        if self._debug_enabled():
+            print(msg, flush=True)
+
+    def _as_bool(self, value) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y"}
+        return bool(value)
+
+    def _content_preview(self, content: List[Dict], max_text_chars: int = 2000) -> str:
+        parts = []
+        for item in content:
+            ctype = item.get("type")
+            if ctype == "text":
+                text = str(item.get("text", "")).replace("\n", " ").strip()
+                if len(text) > max_text_chars:
+                    text = text[:max_text_chars] + "..."
+                parts.append(f"text='{text}'")
+            elif ctype == "video":
+                parts.append(f"video='{item.get('url', item.get('video', ''))}'")
+            elif ctype == "image":
+                parts.append(f"image='{item.get('url', item.get('image', ''))}'")
+            else:
+                parts.append(str(item))
+        return " | ".join(parts)
+
     def __init__(
         self,
         pretrained: str = "OpenGVLab/InternVL3_5-8B-HF",
@@ -68,10 +98,19 @@ class InternVLHf(lmms):
         max_patches: int = 12,
         num_frames: int = 32,
         fps: Optional[float] = None,
+        do_sample_frames: bool = True,
+        do_resize_video: bool = True,
+        video_width: int = 448,
+        video_height: int = 448,
         trust_remote_code: Optional[bool] = False,
         low_cpu_mem_usage: Optional[bool] = False,
         attn_implementation: Optional[str] = None,
         use_cache: bool = True,
+        load_in_4bit: bool = False,
+        load_in_8bit: bool = False,
+        bnb_4bit_compute_dtype: str = "float16",
+        bnb_4bit_quant_type: str = "nf4",
+        bnb_4bit_use_double_quant: bool = True,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -81,6 +120,10 @@ class InternVLHf(lmms):
         self.max_patches = max_patches
         self.num_frames = num_frames
         self.fps = fps
+        self.do_sample_frames = self._as_bool(do_sample_frames)
+        self.do_resize_video = self._as_bool(do_resize_video)
+        self.video_width = int(video_width)
+        self.video_height = int(video_height)
 
         batch_size_int = int(batch_size)
         assert batch_size_int == 1, f"Batch size should be 1 for InternVLHf, but got {batch_size_int}."
@@ -97,14 +140,42 @@ class InternVLHf(lmms):
             self._device = torch.device(device)
             self.device_map = device_map if device_map else device
 
+        model_kwargs = {
+            "revision": revision,
+            "torch_dtype": torch.bfloat16,
+            "low_cpu_mem_usage": low_cpu_mem_usage,
+            "attn_implementation": attn_implementation,
+            "trust_remote_code": trust_remote_code,
+            "device_map": self.device_map,
+        }
+        model_kwargs = {key: value for key, value in model_kwargs.items() if value is not None}
+
+        load_in_4bit = self._as_bool(load_in_4bit)
+        load_in_8bit = self._as_bool(load_in_8bit)
+        if load_in_4bit and load_in_8bit:
+            raise ValueError("Only one of load_in_4bit or load_in_8bit can be True.")
+
+        if load_in_4bit or load_in_8bit:
+            from transformers import BitsAndBytesConfig
+
+            model_kwargs.pop("torch_dtype", None)
+            if load_in_4bit:
+                compute_dtype = getattr(torch, str(bnb_4bit_compute_dtype), None)
+                if compute_dtype is None:
+                    raise ValueError(f"Unsupported bnb_4bit_compute_dtype={bnb_4bit_compute_dtype}")
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=compute_dtype,
+                    bnb_4bit_use_double_quant=self._as_bool(bnb_4bit_use_double_quant),
+                    bnb_4bit_quant_type=bnb_4bit_quant_type,
+                )
+            else:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+
+        self._dbg(f"[MODEL LOAD KWARGS] {model_kwargs}")
         self._model = InternVLForConditionalGeneration.from_pretrained(
             self.path,
-            revision=revision,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-            attn_implementation=attn_implementation,
-            trust_remote_code=trust_remote_code,
-            device_map=self.device_map,
+            **model_kwargs,
         ).eval()
         self._config = self._model.config
 
@@ -229,6 +300,7 @@ class InternVLHf(lmms):
         total_elapsed_time = 0
         total_tokens = 0
         for chunk in chunks:
+            self._dbg(f"\n[BATCH] size={len(chunk)}")
             ctx, doc_to_messages, all_gen_kwargs, doc_id, task, split = zip(*chunk)
             task = task[0]
             split = split[0]
@@ -236,46 +308,90 @@ class InternVLHf(lmms):
             chat_messages: List[ChatMessages] = [ChatMessages(**{"messages": message}) for message in chat_messages]
             visuals = []
             videos = []
-            for messages in chat_messages:
+            for idx, messages in enumerate(chat_messages):
                 visual, video, _ = messages.extract_media()
                 visuals.append(visual)
                 videos.append(video)
+                request_doc_id = doc_id[idx]
+                doc = self.task_dict[task][split][request_doc_id]
+                source_name = getattr(doc_to_messages[idx], "__name__", "")
+                self._dbg("\n" + "=" * 100)
+                self._dbg(
+                    f"[STEP] task={task} split={split} doc_id={request_doc_id} "
+                    f"step={doc.get('step')} id={doc.get('id')} mode={doc.get('mode')}"
+                )
+                self._dbg(f"[QUESTION] {doc.get('question')}")
+                self._dbg(f"[SOURCE] doc_to_messages={source_name}")
+                self._dbg(
+                    f"[MEDIA EXTRACTED] images={len(visual)} videos={len(video)} "
+                    f"image_urls={visual} video_urls={video}"
+                )
+                self._dbg("[FINAL PROTOCOL MESSAGES]")
+                for msg_idx, msg in enumerate(messages.model_dump()["messages"]):
+                    content = msg.get("content", [])
+                    self._dbg(
+                        f"  [PROTO] idx={msg_idx} role={msg.get('role')} "
+                        f"types={[c.get('type') for c in content]} "
+                        f"{self._content_preview(content)}"
+                    )
             visuals = self.flatten(visuals)
             videos = self.flatten(videos)
+            self._dbg(f"[MEDIA FLATTENED] images={len(visuals)} videos={len(videos)}")
 
             images_kwargs = {}
-            videos_kwargs = {}
+            videos_kwargs = {"do_sample_frames": self.do_sample_frames}
+            if self.do_resize_video:
+                videos_kwargs["do_resize"] = True
+                videos_kwargs["size"] = {"height": self.video_height, "width": self.video_width}
+            else:
+                videos_kwargs["do_resize"] = False
             if self.min_patches is not None:
                 images_kwargs["min_patches"] = self.min_patches
             if self.max_patches is not None:
                 images_kwargs["max_patches"] = self.max_patches
-            if self.num_frames is not None:
-                videos_kwargs["num_frames"] = self.num_frames
-            if self.fps is not None:
-                videos_kwargs["fps"] = self.fps
+            if self.do_sample_frames:
+                if self.num_frames is not None:
+                    videos_kwargs["num_frames"] = self.num_frames
+                elif self.fps is not None:
+                    videos_kwargs["fps"] = self.fps
 
             # Apply chat template
             messages = chat_messages[0].model_dump()["messages"]
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            self._dbg(f"[CHAT TEMPLATE LEN] {len(text)} chars")
+            self._dbg(f"[CHAT TEMPLATE]\n{text}")
             if self.accelerator.is_main_process and doc_id[0] % 100 == 0:
                 eval_logger.debug(f"Prompt for doc ID {doc_id[0]}:\n\n{text}\n")
 
+            images = visuals if len(visuals) > 0 else None
             if len(videos) == 0:
                 videos = None
+            self._dbg(
+                f"[PROCESSOR INPUT] images={'None' if images is None else len(images)} "
+                f"videos={'None' if videos is None else len(videos)} "
+                f"images_kwargs={images_kwargs} videos_kwargs={videos_kwargs}"
+            )
             inputs = self.processor(
-                images=visuals,
+                images=images,
                 videos=videos,
                 text=text,
                 return_tensors="pt",
                 **images_kwargs,
                 **videos_kwargs,
             ).to(self.device, self.model.dtype)
+            pixel_shape = tuple(inputs.pixel_values.shape) if hasattr(inputs, "pixel_values") else "NA"
+            self._dbg(
+                f"[PROCESSOR OUTPUT] input_ids_shape={tuple(inputs.input_ids.shape)} "
+                f"attention_mask_shape={tuple(inputs.attention_mask.shape) if hasattr(inputs, 'attention_mask') else 'NA'} "
+                f"pixel_values_shape={pixel_shape}"
+            )
 
             # we assume all gen kwargs in the batch are the same
             # this is safe to assume because the `grouper` object ensures it.
-            gen_kwargs = all_gen_kwargs[0]
-
-            gen_kwargs["image_sizes"] = [visuals[idx].size for idx in range(len(visuals))]
+            gen_kwargs = dict(all_gen_kwargs[0])
+            gen_kwargs.pop("until", None)
+            gen_kwargs.pop("image_sizes", None)
+            gen_kwargs.pop("do_sample", None)
             if "max_new_tokens" not in gen_kwargs:
                 gen_kwargs["max_new_tokens"] = 1024
             if "temperature" not in gen_kwargs:
@@ -285,6 +401,7 @@ class InternVLHf(lmms):
             if "num_beams" not in gen_kwargs:
                 gen_kwargs["num_beams"] = 1
             do_sample = True if gen_kwargs["temperature"] > 0 else False
+            self._dbg(f"[GEN KWARGS] {gen_kwargs}")
             generated_ids_trimmed = None
             answers = [""]
             try:
@@ -311,9 +428,15 @@ class InternVLHf(lmms):
 
                 # Calculate timing metrics
                 total_elapsed_time += end_time - start_time
-                total_tokens += sum(len(ids) for ids in generated_ids_trimmed)
+                output_tokens = sum(len(ids) for ids in generated_ids_trimmed)
+                total_tokens += output_tokens
+                self._dbg(
+                    f"[GENERATION METRICS] elapsed={end_time - start_time:.4f}s "
+                    f"output_tokens={output_tokens}"
+                )
             except Exception as e:
                 eval_logger.error(f"Error {e} in generating")
+                self._dbg(f"[GENERATION ERROR] {type(e).__name__}: {e}")
                 total_elapsed_time += 0
                 total_tokens += 0
 
@@ -321,6 +444,9 @@ class InternVLHf(lmms):
                 eval_logger.debug(f"Generated text for doc ID {doc_id[0]}:\n\n{answers}\n")
 
             for i, answer in enumerate(answers):
+                self._dbg("\n" + "=" * 80)
+                self._dbg("[RAW OUTPUT]")
+                self._dbg(str(answer))
                 token_counts = TokenCounts(output_tokens=len(generated_ids_trimmed[i])) if generated_ids_trimmed is not None else None
                 res.append(GenerationResult(text=answer, token_counts=token_counts))
                 self.cache_hook.add_partial("generate_until", (text, gen_kwargs), answer)

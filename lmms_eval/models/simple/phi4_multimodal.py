@@ -11,7 +11,7 @@ from accelerate.state import AcceleratorState
 from decord import VideoReader, cpu
 from PIL import Image
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoProcessor
+from transformers import AutoModelForCausalLM, AutoProcessor, AutoConfig
 
 from lmms_eval import utils
 from lmms_eval.api.instance import Instance
@@ -72,7 +72,31 @@ class Phi4(lmms):
             dtype = getattr(torch, dtype)
 
         self.max_frames_num = max_frames_num
-        self._model = AutoModelForCausalLM.from_pretrained(pretrained, revision=revision, torch_dtype=dtype, device_map=self.device_map, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation)
+        config = AutoConfig.from_pretrained(
+            pretrained,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+        )
+
+        if attn_implementation is not None:
+            config._attn_implementation = attn_implementation
+            config._attn_implementation_internal = attn_implementation
+            if hasattr(config, "attn_implementation"):
+                config.attn_implementation = attn_implementation
+
+        print("[PHI DEBUG] attn_implementation =", attn_implementation, flush=True)
+        print("[PHI DEBUG] config._attn_implementation =", getattr(config, "_attn_implementation", None), flush=True)
+
+        self._model = AutoModelForCausalLM.from_pretrained(
+            pretrained,
+            revision=revision,
+            config=config,
+            torch_dtype=dtype,
+            device_map=self.device_map,
+            trust_remote_code=trust_remote_code,
+            attn_implementation=attn_implementation,
+        )
+        #self._model = AutoModelForCausalLM.from_pretrained(pretrained, revision=revision, torch_dtype=dtype, device_map=self.device_map, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation)
 
         self.pretrained = pretrained
         self._processor = AutoProcessor.from_pretrained(pretrained, revision=revision, trust_remote_code=trust_remote_code)

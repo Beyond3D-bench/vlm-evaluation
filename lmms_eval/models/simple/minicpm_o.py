@@ -102,18 +102,31 @@ class MiniCPM_O(lmms):
         device_map: Optional[str] = "auto",
         batch_size: Optional[Union[int, str]] = 1,
         use_cache: bool = True,
+
+        trust_remote_code: bool = True,
+        dtype: torch.dtype = torch.bfloat16,
+
         attn_implementation: str = "sdpa",
         init_vision: bool = True,
         init_audio: bool = True,
         init_tts: bool = False,
+        #
+        fps: float = 1.0,
+        #
         max_num_frames: int = MAX_NUM_FRAMES,
         system_prompt: str = "You are a helpful assistant.",
+        
         **kwargs,
     ) -> None:
         super().__init__()
-        assert kwargs == {}, f"Unexpected kwargs: {kwargs}"
+        # assert kwargs == {}, f"Unexpected kwargs: {kwargs}"
+        if kwargs:
+            eval_logger.warning(f"Ignoring unexpected kwargs: {kwargs}")
 
         self.max_num_frames = max_num_frames
+        #
+        self.fps = fps
+        #
         self.system_prompt = system_prompt
         self.init_vision = init_vision
         self.init_audio = init_audio
@@ -131,16 +144,48 @@ class MiniCPM_O(lmms):
             self.device_map = f"cuda:{accelerator.local_process_index}"
 
         # Load model with omni initialization
+        # self._model = AutoModel.from_pretrained(
+        #     pretrained,
+        #     trust_remote_code=True,
+        #     attn_implementation=attn_implementation,
+        #     torch_dtype=torch.bfloat16,
+        #     device_map=self.device_map,
+        #     init_vision=init_vision,
+        #     init_audio=init_audio,
+        #     init_tts=init_tts,
+        # )
         self._model = AutoModel.from_pretrained(
             pretrained,
-            trust_remote_code=True,
+            trust_remote_code=trust_remote_code,
+            torch_dtype=dtype,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+            load_in_4bit=True,
+
+            
             attn_implementation=attn_implementation,
-            torch_dtype=torch.bfloat16,
-            device_map=self.device_map,
+
             init_vision=init_vision,
             init_audio=init_audio,
             init_tts=init_tts,
         )
+
+        # self._model = self._model.cuda()
+
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            pretrained,
+            trust_remote_code=trust_remote_code,
+        )
+
+        self._config = self._model.config
+        self.model.eval()
+
+        # MiniCPM-o remote code does not support tie_weights cleanly in this setup
+        eval_logger.warning("Skipping tie_weights() for MiniCPM_V / MiniCPM-o")
+
+        self.batch_size_per_gpu = int(batch_size)
+
+        ### 
 
         if self.device_map == "auto":
             self._model = self._model.eval()

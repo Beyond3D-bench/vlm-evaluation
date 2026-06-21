@@ -12,9 +12,6 @@ from loguru import logger as eval_logger
 
 LETTER_MAP = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-DEBUG_EVAL = os.getenv("OOS_DEBUG_EVAL", "0") == "1"
-DEBUG_FAIL_ONLY = os.getenv("OOS_DEBUG_FAIL_ONLY", "0") == "1"
-DEBUG_REASONING = os.getenv("OOS_DEBUG_REASONING", "0") == "1"
 DEBUG_MAX_SAMPLES = int(os.getenv("OOS_DEBUG_MAX_SAMPLES", "0"))
 
 # Controls multi-turn prompt construction.
@@ -54,26 +51,113 @@ def _is_time_point_open_task(doc: Dict[str, Any]) -> bool:
 def _is_multiple_choice(doc: Dict[str, Any]) -> bool:
     return bool(doc.get("choices"))
 
+def _is_step4_fixture(doc: Dict[str, Any]) -> bool:
+    return str(doc.get("step_question_class", "")).strip().lower() == "oos_step4_fixture"
+
+
+def _use_step4_raw_fixture_options(doc: Dict[str, Any]) -> bool:
+    if os.getenv("OOS_STEP4_RAW_FIXTURE_OPTIONS", "0") != "1":
+        return False
+    return _is_step4_fixture(doc)
+
+def _step4_raw_fixture_options(step: Dict[str, Any]) -> Tuple[List[str], Optional[int]]:
+    """
+    For step 4 debug mode:
+    use raw fixture names as answer options, and set raw_correct_fixture as gold.
+    """
+    meta = step.get("answer_metadata") or {}
+
+    raw_correct = meta.get("raw_correct_fixture") or meta.get("correct_fixture")
+    expanded_pool = meta.get("expanded_choice_pool") or []
+
+    # Prefer full raw fixture IDs if your generator stores them.
+    # Fallback to whatever is available in expanded_choice_pool.
+    raw_options = (
+        meta.get("raw_choice_pool")
+        or meta.get("raw_expanded_choice_pool")
+        or meta.get("fixture_choice_pool")
+        or expanded_pool
+    )
+
+    raw_options = [str(x) for x in raw_options if str(x).strip()]
+
+    if raw_correct:
+        raw_correct = str(raw_correct).strip()
+        if raw_correct and raw_correct not in raw_options:
+            raw_options.append(raw_correct)
+
+    if not raw_options or not raw_correct:
+        return [], None
+
+    try:
+        raw_answer_idx = raw_options.index(raw_correct)
+    except ValueError:
+        return [], None
+
+    return raw_options, raw_answer_idx
+
+
+def _get_step4_bev_image_path(doc: Dict[str, Any]) -> Optional[str]:
+    """
+    Infer kitchen-specific BEV layout image.
+
+    Example:
+      video_id = P04-20240413-142619
+      -> /work/courses/3dv/team1/data/HD-EPIC/kit_layout/P04.jpeg
+         or .jpg / .png
+    """
+    explicit_path = (
+        doc.get("bev_image_path")
+        or doc.get("kitchen_bev_image_path")
+        or ((doc.get("generation_info") or {}).get("bev_image_path"))
+        or os.getenv("OOS_KITCHEN_BEV_IMAGE_PATH")
+    )
+
+    candidate_paths: List[str] = []
+
+    if explicit_path:
+        candidate_paths.append(_rewrite_path(str(explicit_path)))
+
+    bev_dir = os.getenv(
+        "OOS_KITCHEN_BEV_DIR",
+        "/work/courses/3dv/team1/data/HD-EPIC/kit_layout",
+    )
+
+    video_id = (
+        doc.get("video_id")
+        or doc.get("source_video_id")
+        or ((doc.get("generation_info") or {}).get("video_id"))
+        or ""
+    )
+    video_id = str(video_id).strip()
+
+    # P04-20240413-142619 -> P04
+    kitchen_id = video_id.split("-")[0] if video_id else ""
+
+    if kitchen_id:
+        for ext in ("jpeg", "jpg", "png"):
+            candidate_paths.append(os.path.join(bev_dir, f"{kitchen_id}.{ext}"))
+
+    for path in candidate_paths:
+        if path and os.path.exists(path):
+            return path
+
+    eval_logger.warning(
+        f"Step-4 BEV image not found for doc id={doc.get('id')}, "
+        f"video_id={video_id}, tried={candidate_paths}"
+    )
+    return None
 
 # def _is_step2_last_visible(doc: Dict[str, Any]) -> bool:
 #     return str(doc.get("step_question_class", "")).strip().lower() == "oos_step2_last_visible"
 def _time_point_instruction(doc: Dict[str, Any]) -> str:
     example = "Example format: <TIME 00:00:12.3 video 1>; Point=(0.45, 0.62)"
 
-    if DEBUG_REASONING:
-        return (
-            "Estimate the requested event time and its normalized image location. "
-            "Use normalized coordinates where x and y are each between 0 and 1. "
-            "First briefly explain your reasoning from the video. "
-            "Then on a new line output exactly: "
-            "Final Answer: <TIME HH:MM:SS.s video 1>; Point=(<x>, <y>). "
-            + example
-        )
     return (
-        "Give a single structured answer using normalized coordinates. "
+        "Estimate the requested event time and its image location at that point. "
         "Output exactly one line in this format: "
         "<TIME HH:MM:SS.s video 1>; Point=(<x>, <y>). "
-        "Use x,y normalized to [0,1]. "
+        " The x and y coordinates must be normalized to the range [0, 1]. "
         + example
     )
 
@@ -101,19 +185,16 @@ def _stable_cache_dir() -> str:
 
 
 def _run_ffmpeg(cmd: List[str], error_prefix: str) -> None:
-    # Use custom ffmpeg path if provided
-    ffmpeg_path = os.getenv(
-        "FFMPEG_PATH"
-    )
-
-    # Replace "ffmpeg" with full path
-    cmd = [ffmpeg_path if cmd[0] == "ffmpeg" else cmd[0]] + cmd[1:]
+    ffmpeg_path = os.getenv("FFMPEG_PATH")
+    if ffmpeg_path and cmd[0] == "ffmpeg":
+        cmd = [ffmpeg_path] + cmd[1:]
 
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError as e:
+        attempted = cmd[0]
         raise RuntimeError(
-            f"ffmpeg not found at {ffmpeg_path}. Please check path."
+            f"ffmpeg not found: {attempted}. Set FFMPEG_PATH or add ffmpeg to PATH."
         ) from e
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.decode(errors="ignore")
@@ -191,6 +272,55 @@ def _extract_prefix_video(full_video_path: str, end_time: float) -> str:
         "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "23", output_path,
     ]
     _run_ffmpeg(cmd, f"Prefix extraction failed for {canonical_video_path}")
+    return output_path
+
+def _is_step1_query_frame_debug(doc: Dict[str, Any]) -> bool:
+    """Return True when step-1 visibility debugging should use one query-time image."""
+    if os.getenv("OOS_STEP1_QUERY_FRAME_DEBUG", "0") != "1":
+        return False
+
+    step_id = str(doc.get("step", "")).strip().lower()
+    qclass = str(doc.get("step_question_class", "")).strip().lower()
+
+    return step_id == "1" or qclass == "oos_step1_visibility"
+
+def _extract_query_frame_image(full_video_path: str, query_time: float) -> str:
+    """Extract exactly one image frame at query_time for step-1 visibility debugging."""
+    if not os.path.exists(full_video_path):
+        raise FileNotFoundError(f"Full video path does not exist: {full_video_path}")
+    if query_time < 0:
+        raise ValueError(f"Invalid query time: {query_time}")
+
+    canonical_video_path = _preprocess_video(full_video_path)
+
+    target_fps, resize_w, resize_h = _video_preprocess_config()
+    vf_parts: List[str] = []
+    if os.getenv("OOS_STEP1_FRAME_KEEP_SIZE", "0") != "1" and resize_w and resize_h:
+        vf_parts.append(f"scale={resize_w}:{resize_h}")
+
+    cache_dir = _stable_cache_dir()
+    config_key = (
+        f"query_frame|src={canonical_video_path}|t={float(query_time):.3f}|"
+        f"vf={','.join(vf_parts)}"
+    )
+    output_path = os.path.join(
+        cache_dir,
+        hashlib.md5(config_key.encode("utf-8")).hexdigest() + ".jpg",
+    )
+    if os.path.exists(output_path):
+        return output_path
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", canonical_video_path,
+        "-ss", str(float(query_time)),
+        "-frames:v", "1",
+    ]
+    if vf_parts:
+        cmd += ["-vf", ",".join(vf_parts)]
+    cmd += ["-q:v", "2", output_path]
+
+    _run_ffmpeg(cmd, f"Query-time frame extraction failed for {canonical_video_path}")
     return output_path
 
 def _needs_anchor_marker(doc: Dict[str, Any]) -> bool:
@@ -349,58 +479,183 @@ def _normalize_relation_text(text: str) -> str:
     return mapping.get(text, text)
 
 
+# def _clean_prediction(text: Optional[str]) -> str:
+#     if text is None:
+#         return ""
+#     text = str(text).strip()
+
+#     final_patterns = [
+#         r"final answer\s*[:\-]\s*([A-Z])\b",
+#         r"final answer\s*[:\-]\s*(.+)",
+#         r"answer\s*[:\-]\s*([A-Z])\b",
+#         r"answer\s*[:\-]\s*(.+)",
+#     ]
+#     for pattern in final_patterns:
+#         matches = re.findall(pattern, text, flags=re.I)
+#         if matches:
+#             candidate = matches[-1].strip()
+#             candidate = candidate.splitlines()[0].strip()
+#             return candidate
+
+#     lines = [line.strip() for line in text.splitlines() if line.strip()]
+#     return lines[-1] if lines else text
+
+
+# def _extract_letter_index(pred: str, n_choices: int) -> int:
+#     pred_up = pred.upper().strip()
+#     patterns = [
+#         r"^\(?([A-Z])\)?\.?$",
+#         r"^(?:OPTION|ANSWER)\s*[:\-]?\s*([A-Z])\.?$",
+#         r"^\s*([A-Z])\s*[\)\.\:\-]\s*",
+#     ]
+#     for pattern in patterns:
+#         m = re.search(pattern, pred_up)
+#         if m:
+#             idx = LETTER_MAP.find(m.group(1))
+#             if 0 <= idx < n_choices:
+#                 return idx
+#     return -1
+
+
+# def _extract_choice_text_index(pred: str, choices: List[str]) -> int:
+#     pred_norm = _normalize_relation_text(pred)
+#     choice_norms = [_normalize_relation_text(c) for c in choices]
+
+#     for i, c in enumerate(choice_norms):
+#         if pred_norm == c:
+#             return i
+
+#     for i, c in enumerate(choice_norms):
+#         if c and c in pred_norm:
+#             return i
+
+#     for i, c in enumerate(choice_norms):
+#         if pred_norm and pred_norm in c:
+#             return i
+
+#     return -1
+
+
+# def extract_prediction_index(prediction: str, choices: List[str]) -> int:
+#     pred = _clean_prediction(prediction)
+#     idx = _extract_letter_index(pred, len(choices))
+#     if idx != -1:
+#         return idx
+#     idx = _extract_choice_text_index(pred, choices)
+#     if idx != -1:
+#         return idx
+#     return -1
+def _strip_ansi(text: str) -> str:
+    """Remove terminal color/control sequences that can leak into .out logs."""
+    if not text:
+        return ""
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(text))
+
+
 def _clean_prediction(text: Optional[str]) -> str:
     if text is None:
         return ""
-    text = str(text).strip()
+
+    text = _strip_ansi(str(text)).replace("\u0332", "").strip()
+    if not text:
+        return ""
+
+    # Remove hidden reasoning tail if present.
+    text = re.sub(r"</think>.*$", "", text, flags=re.I | re.S).strip()
 
     final_patterns = [
-        r"final answer\s*[:\-]\s*([A-Z])\b",
-        r"final answer\s*[:\-]\s*(.+)",
-        r"answer\s*[:\-]\s*([A-Z])\b",
-        r"answer\s*[:\-]\s*(.+)",
+        r"(?:final\s+answer|answer|correct\s+answer|option|choice)\s*(?:is|=|:|-)?\s*\(?\s*([A-Z])\s*\)?\b",
+        r"(?:final\s+answer|answer|correct\s+answer)\s*(?:is|=|:|-)\s*([^\n\r]+)",
     ]
+
     for pattern in final_patterns:
         matches = re.findall(pattern, text, flags=re.I)
         if matches:
-            candidate = matches[-1].strip()
-            candidate = candidate.splitlines()[0].strip()
-            return candidate
+            candidate = str(matches[-1]).strip()
+            return candidate.splitlines()[0].strip()
 
+    # Cut off prompt/log echoes if the raw output contains them.
+    cut_patterns = [
+        r"\n\s*Question\s*:",
+        r"\n\s*Options\s*:",
+        r"\n\s*Select\s+the\s+best\s+option",
+        r"\n\s*\[BATCH\]",
+        r"\n\s*\[STEP\]",
+        r"\n\s*\[CLEANED OUTPUT\]",
+    ]
+
+    for pattern in cut_patterns:
+        m = re.search(pattern, text, flags=re.I)
+        if m:
+            text = text[:m.start()].strip()
+
+    # Important change: use first non-empty line, not last line.
+    # In your raw logs, the answer is often at the beginning, followed by noisy text.
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return lines[-1] if lines else text
+    return lines[0] if lines else text.strip()
 
 
 def _extract_letter_index(pred: str, n_choices: int) -> int:
-    pred_up = pred.upper().strip()
+    if not pred:
+        return -1
+
+    pred_up = _strip_ansi(str(pred)).replace("\u0332", "").upper().strip()
+    if not pred_up:
+        return -1
+
+    max_letter = LETTER_MAP[n_choices - 1] if 0 < n_choices <= len(LETTER_MAP) else "Z"
+
     patterns = [
-        r"^\(?([A-Z])\)?\.?$",
-        r"^(?:OPTION|ANSWER)\s*[:\-]?\s*([A-Z])\.?$",
-        r"^\s*([A-Z])\s*[\)\.\:\-]\s*",
+        # Explicit phrases: "Answer is B", "Final Answer: B", "Option B"
+        rf"(?:FINAL\s+ANSWER|ANSWER|CORRECT\s+ANSWER|OPTION|CHOICE)\s*(?:IS|=|:|-)?\s*[\(\[]?\s*([A-{max_letter}])(?=$|[^A-Z])",
+
+        # Leading noisy forms: "B 2022...", "B**...", "(B)", "B. yes"
+        rf"^[\s\W_`'\"“”‘’（(【\[]*([A-{max_letter}])(?=$|[^A-Z])",
+
+        # Bullet/markdown forms: "- B.", "* (B)"
+        rf"^[\s>*\-•]+[\(\[]?\s*([A-{max_letter}])(?=$|[^A-Z])",
     ]
+
     for pattern in patterns:
-        m = re.search(pattern, pred_up)
+        m = re.search(pattern, pred_up, flags=re.I)
         if m:
-            idx = LETTER_MAP.find(m.group(1))
+            idx = LETTER_MAP.find(m.group(1).upper())
             if 0 <= idx < n_choices:
                 return idx
+
     return -1
 
 
 def _extract_choice_text_index(pred: str, choices: List[str]) -> int:
-    pred_norm = _normalize_relation_text(pred)
-    choice_norms = [_normalize_relation_text(c) for c in choices]
+    pred_norm = _normalize_relation_text(_clean_prediction(pred))
+    pred_norm = pred_norm.strip(" .,:;!?()[]{}\"'`*_")
+    choice_norms = [
+        _normalize_relation_text(c).strip(" .,:;!?()[]{}\"'`*_")
+        for c in choices
+    ]
 
+    # Exact match.
     for i, c in enumerate(choice_norms):
         if pred_norm == c:
             return i
 
+    # Important for your Yes/No task:
+    # if the model says "yes" or "no" instead of the option letter,
+    # map it back to the corresponding shuffled option.
+    yes_no = re.search(r"\b(yes|no)\b", pred_norm, flags=re.I)
+    if yes_no:
+        yn = yes_no.group(1).lower()
+        for i, c in enumerate(choice_norms):
+            if c == yn:
+                return i
+
+    # Word-boundary containment to avoid overly loose substring matches.
     for i, c in enumerate(choice_norms):
-        if c and c in pred_norm:
+        if c and re.search(rf"\b{re.escape(c)}\b", pred_norm):
             return i
 
     for i, c in enumerate(choice_norms):
-        if pred_norm and pred_norm in c:
+        if pred_norm and re.search(rf"\b{re.escape(pred_norm)}\b", c):
             return i
 
     return -1
@@ -408,14 +663,25 @@ def _extract_choice_text_index(pred: str, choices: List[str]) -> int:
 
 def extract_prediction_index(prediction: str, choices: List[str]) -> int:
     pred = _clean_prediction(prediction)
+
     idx = _extract_letter_index(pred, len(choices))
     if idx != -1:
         return idx
+
     idx = _extract_choice_text_index(pred, choices)
     if idx != -1:
         return idx
-    return -1
 
+    # Fallback to full raw output in case cleaning removed useful context.
+    idx = _extract_letter_index(str(prediction), len(choices))
+    if idx != -1:
+        return idx
+
+    idx = _extract_choice_text_index(str(prediction), choices)
+    if idx != -1:
+        return idx
+
+    return -1
 
 def _step_answer_text(step_doc: Dict[str, Any]) -> Optional[str]:
     if step_doc.get("answer") not in (None, ""):
@@ -501,11 +767,6 @@ def _history_answer_from_step(step: Dict[str, Any], object_name: Optional[str] =
 
 
 def _default_open_answer_instruction() -> str:
-    if DEBUG_REASONING:
-        return (
-            "First briefly explain your reasoning from the video. "
-            "Then on a new line output: Final Answer: <SHORT TEXT ANSWER>."
-        )
     return "Answer briefly and directly."
 
 def _seconds_to_time_token(seconds: float, video_idx: int = 1) -> str:
@@ -534,62 +795,15 @@ def _parse_time_token_to_seconds(text: str) -> Optional[float]:
     ss = float(m.group(3))
     return hh * 3600 + mm * 60 + ss
 
-# def _step2_last_visible_instruction(doc: Dict[str, Any]) -> str:
-#     example = "Example format: <TIME 00:00:12.3 video 1>; Point=(0.45, 0.62)"
-
-#     if DEBUG_REASONING:
-#         return (
-#             "Estimate when the target was last visible and its normalized image location. "
-#             "Use normalized coordinates where x and y are each between 0 and 1. "
-#             "First briefly explain your reasoning from the video. "
-#             "Then on a new line output exactly: "
-#             "Final Answer: <TIME HH:MM:SS.s video 1>; Point=(<x>, <y>). "
-#             + example
-#         )
-#     return (
-#         "Give a single structured answer using normalized coordinates. "
-#         "Output exactly one line in this format: "
-#         "<TIME HH:MM:SS.s video 1>; Point=(<x>, <y>). "
-#         "Use x,y normalized to [0,1]. "
-#         + example
-#     )
-
-
-
-# def _prompt_suffix(doc: Dict[str, Any], include_answer_instruction: bool = True) -> str:
-#     lines: List[str] = []
-#     if _is_multiple_choice(doc):
-#         lines += ["Options:", _format_choices(doc["choices"])]
-#         if include_answer_instruction:
-#             if DEBUG_REASONING:
-#                 lines.append(
-#                     "Briefly reason from the video, then on a new line output exactly: Final Answer: <OPTION LETTER>."
-#                 )
-#             else:
-#                 lines.append(
-#                     "Select the best option and output only its letter: A, B, C, or D (or the matching option letter if there are more choices)."
-#                 )
-#     else:
-#         if include_answer_instruction:
-#             if _is_step2_last_visible(doc):
-#                 lines.append(_step2_last_visible_instruction(doc))
-#             else:
-#                 lines.append(_default_open_answer_instruction())
-#     return "\n".join(lines).strip()
 
 def _prompt_suffix(doc: Dict[str, Any], include_answer_instruction: bool = True) -> str:
     lines: List[str] = []
     if _is_multiple_choice(doc):
         lines += ["Options:", _format_choices(doc["choices"])]
         if include_answer_instruction:
-            if DEBUG_REASONING:
-                lines.append(
-                    "Briefly reason from the video, then on a new line output exactly: Final Answer: <OPTION LETTER>."
-                )
-            else:
-                lines.append(
-                    "Select the best option and output only its letter."
-                )
+            lines.append(
+                "Select the best option and output only its letter."
+            )
     else:
         if include_answer_instruction:
             if _is_time_point_open_task(doc):
@@ -834,13 +1048,39 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         item["depends_on_steps"] = _normalize_dep_list(step.get("depends_on_steps"))
         item["question_class"] = step.get("step_question_class", raw_doc.get("question_class", "unknown"))
         item["step_question_class"] = item["question_class"]
+        # item["question"] = step.get("question")
+        # item["choices"] = step.get("choices") or []
+        # item["answer_idx"] = None if step.get("correct_idx") is None else int(step["correct_idx"])
+        # item["answer"] = step.get("target_text", step.get("answer"))
+        # item["acceptable_answers"] = step.get("acceptable_answers") or []
+        # item["acceptable_answer_idxs"] = step.get("acceptable_idxs") or step.get("acceptable_answer_idxs") or []
+        # item["answer_metadata"] = step.get("answer_metadata")
         item["question"] = step.get("question")
-        item["choices"] = step.get("choices") or []
-        item["answer_idx"] = None if step.get("correct_idx") is None else int(step["correct_idx"])
-        item["answer"] = step.get("target_text", step.get("answer"))
-        item["acceptable_answers"] = step.get("acceptable_answers") or []
-        item["acceptable_answer_idxs"] = step.get("acceptable_idxs") or step.get("acceptable_answer_idxs") or []
         item["answer_metadata"] = step.get("answer_metadata")
+
+        if _use_step4_raw_fixture_options(item):
+            raw_choices, raw_answer_idx = _step4_raw_fixture_options(step)
+
+            if raw_choices and raw_answer_idx is not None:
+                item["choices"] = raw_choices
+                item["answer_idx"] = int(raw_answer_idx)
+                item["answer"] = raw_choices[raw_answer_idx]
+                item["acceptable_answers"] = []
+                item["acceptable_answer_idxs"] = []
+
+            else:
+                # Fallback to original behavior if raw metadata is missing.
+                item["choices"] = step.get("choices") or []
+                item["answer_idx"] = None if step.get("correct_idx") is None else int(step["correct_idx"])
+                item["answer"] = step.get("target_text", step.get("answer"))
+                item["acceptable_answers"] = step.get("acceptable_answers") or []
+                item["acceptable_answer_idxs"] = step.get("acceptable_idxs") or step.get("acceptable_answer_idxs") or []
+        else:
+            item["choices"] = step.get("choices") or []
+            item["answer_idx"] = None if step.get("correct_idx") is None else int(step["correct_idx"])
+            item["answer"] = step.get("target_text", step.get("answer"))
+            item["acceptable_answers"] = step.get("acceptable_answers") or []
+            item["acceptable_answer_idxs"] = step.get("acceptable_idxs") or step.get("acceptable_answer_idxs") or []
         item["group_id"] = item["question_class"]
 
         if OOS_HISTORY_MODE == "gold" and raw_doc.get("include_gold_history", True):
@@ -874,6 +1114,13 @@ def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
             continue
 
         query_time = float(query_time)
+
+        if _is_step1_query_frame_debug(doc):
+            key = ("query_frame", video_path, query_time)
+            if key not in seen:
+                seen.add(key)
+                _extract_query_frame_image(video_path, query_time)
+            continue
 
         if _needs_anchor_marker(doc):
             marker_xy = _get_anchor_marker_xy_norm(doc)
@@ -955,6 +1202,13 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
 
     query_time_sec = float(doc.get("query_time_sec", 0.0))
 
+    if _is_step1_query_frame_debug(doc):
+        frame_path = _extract_query_frame_image(video_path, query_time_sec + 1.0)
+        eval_logger.info(
+            f"OOS_STEP1_QUERY_FRAME_DEBUG=1; using query-time image for doc id={doc.get('id')}: {frame_path}"
+        )
+        return [frame_path]
+
     if _needs_anchor_marker(doc):
         marker_xy_norm = _get_anchor_marker_xy_norm(doc)
         if marker_xy_norm is not None:
@@ -964,7 +1218,7 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
             return [
                 _extract_marked_prefix_video(
                     video_path,
-                    query_time_sec,
+                    query_time_sec + 1.0,
                     marker_xy_norm,
                     marker_label=marker_label,
                 )
@@ -974,8 +1228,25 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
             f"Anchor marker requested but no valid object_y pixel found for doc id={doc.get('id')}"
         )
 
-    prefix_path = _extract_prefix_video(video_path, query_time_sec)
-    return [prefix_path]
+    # prefix_path = _extract_prefix_video(video_path, query_time_sec)
+    # return [prefix_path]
+
+    prefix_path = _extract_prefix_video(video_path, query_time_sec + 1.0)
+    visuals = [prefix_path]
+
+    if _use_step4_raw_fixture_options(doc):
+        bev_path = _get_step4_bev_image_path(doc)
+        if bev_path is not None:
+            visuals.append(bev_path)
+            eval_logger.info(
+                f"OOS_STEP4_RAW_FIXTURE_OPTIONS=1; added BEV image for doc id={doc.get('id')}: {bev_path}"
+            )
+        else:
+            eval_logger.warning(
+                f"OOS_STEP4_RAW_FIXTURE_OPTIONS=1 but no valid BEV image found for doc id={doc.get('id')}"
+            )
+
+    return visuals
 
 
 def oos_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> str:
@@ -1013,6 +1284,47 @@ def oos_doc_to_messages(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> 
     messages.append(
         {"role": "user", "content": [{"type": "text", "text": _question_block(doc, include_answer_instruction=True)}]}
     )
+    return messages
+
+
+def _visuals_to_chat_content(visuals: List[Any]) -> List[Dict[str, Any]]:
+    content: List[Dict[str, Any]] = []
+    video_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm")
+
+    for visual in visuals or []:
+        if isinstance(visual, str) and visual.lower().endswith(video_exts):
+            content.append({"type": "video", "url": visual})
+        else:
+            content.append({"type": "image", "url": visual})
+
+    return content
+
+
+def oos_doc_to_messages_with_visuals(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> List[Dict[str, Any]]:
+    """
+    Build a complete multimodal chat prompt on the task side.
+
+    This keeps the same system/history/current-question structure as
+    oos_doc_to_messages, but also injects oos_doc_to_visual outputs into the
+    first user turn. That mirrors the qwen3_vl_chat_fixed wrapper behavior while
+    keeping the original doc_to_messages function unchanged.
+    """
+    messages = oos_doc_to_messages(doc, lmms_eval_specific_kwargs)
+    visual_content = _visuals_to_chat_content(oos_doc_to_visual(doc))
+
+    if not visual_content:
+        return messages
+
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        msg["content"] = visual_content + list(msg.get("content") or [])
+        return messages
+
+    messages.append({
+        "role": "user",
+        "content": visual_content + [{"type": "text", "text": _question_block(doc, include_answer_instruction=True)}],
+    })
     return messages
 
 
@@ -1144,37 +1456,162 @@ def _parse_time_and_point_prediction(prediction: str) -> Dict[str, Optional[floa
 #         )
 #     enriched["time_within_tolerance"] = bool(time_ok)
 #     enriched["coord_within_tolerance"] = bool(coord_ok)
-#     _log_sample_result(doc, prediction, None, [], correct)
 #     return {"oos_score": enriched}
+# def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optional[Dict[str, Any]]:
+#     meta = doc.get("answer_metadata") or {}
+#     qclass = str(doc.get("step_question_class", "")).strip().lower()
+
+#     if qclass == "oos_step2_last_visible":
+#         gold_time = meta.get("sampled_last_visible_time_sec")
+#     elif qclass == "oos_step3_last_placement":
+#         gold_time = meta.get("last_placement_time_sec")
+#     else:
+#         return None
+
+#     gold_point = meta.get("normalized_projected_pixel") or []
+
+#     if not isinstance(gold_time, (int, float)) or not isinstance(gold_point, list) or len(gold_point) < 2:
+#         return None
+
+#     parsed = _parse_time_and_point_prediction(prediction)
+#     pred_time = parsed.get("time_sec")
+#     pred_x = parsed.get("x")
+#     pred_y = parsed.get("y")
+
+#     time_ok = isinstance(pred_time, (int, float)) and abs(float(pred_time) - float(gold_time)) <= OOS_TIME_TOLERANCE_SEC
+#     coord_ok = (
+#         isinstance(pred_x, (int, float))
+#         and isinstance(pred_y, (int, float))
+#         and abs(float(pred_x) - float(gold_point[0])) <= OOS_COORD_TOLERANCE_NORM
+#         and abs(float(pred_y) - float(gold_point[1])) <= OOS_COORD_TOLERANCE_NORM
+#     )
+#     correct = float(time_ok and coord_ok)
+
+#     enriched = dict(doc)
+#     enriched["prediction"] = prediction
+#     enriched["clean_prediction"] = _clean_prediction(prediction)
+#     enriched["pred_idx"] = None
+#     enriched["pred_choice"] = None
+#     enriched["gold_idx"] = None
+#     enriched["gold_choice"] = (
+#         f"{_seconds_to_time_token(float(gold_time), video_idx=1)}; "
+#         f"Point=({_format_float(float(gold_point[0]), 4)}, {_format_float(float(gold_point[1]), 4)})"
+#     )
+#     enriched["gold_idxs"] = []
+#     enriched["gold_choices"] = [enriched["gold_choice"]]
+#     enriched["accuracy"] = correct
+#     enriched["parsed"] = all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y])
+#     enriched["scorable"] = True
+#     enriched["pred_time_sec"] = pred_time
+#     enriched["pred_point_x"] = pred_x
+#     enriched["pred_point_y"] = pred_y
+#     enriched["gold_time_sec"] = float(gold_time)
+#     enriched["gold_point_x"] = float(gold_point[0])
+#     enriched["gold_point_y"] = float(gold_point[1])
+#     enriched["time_tolerance_sec"] = OOS_TIME_TOLERANCE_SEC
+#     enriched["coord_tolerance_norm"] = OOS_COORD_TOLERANCE_NORM
+#     enriched["time_error_sec"] = None if pred_time is None else abs(float(pred_time) - float(gold_time))
+#     enriched["coord_error_linf"] = None if pred_x is None or pred_y is None else max(
+#         abs(float(pred_x) - float(gold_point[0])),
+#         abs(float(pred_y) - float(gold_point[1])),
+#     )
+#     enriched["time_within_tolerance"] = bool(time_ok)
+#     enriched["coord_within_tolerance"] = bool(coord_ok)
+#     return {"oos_score": enriched}
+
 def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optional[Dict[str, Any]]:
     meta = doc.get("answer_metadata") or {}
     qclass = str(doc.get("step_question_class", "")).strip().lower()
 
     if qclass == "oos_step2_last_visible":
-        gold_time = meta.get("sampled_last_visible_time_sec")
+        default_time = meta.get("sampled_last_visible_time_sec")
     elif qclass == "oos_step3_last_placement":
-        gold_time = meta.get("last_placement_time_sec")
+        default_time = meta.get("last_placement_time_sec")
     else:
         return None
 
-    gold_point = meta.get("normalized_projected_pixel") or []
+    default_point = meta.get("normalized_projected_pixel") or []
 
-    if not isinstance(gold_time, (int, float)) or not isinstance(gold_point, list) or len(gold_point) < 2:
-        return None
+    acceptable_meta = meta.get("acceptable_answer_metadata") or []
+
+    gold_candidates = []
+    for item in acceptable_meta:
+        t = item.get("time_sec")
+        xy = item.get("normalized_projected_pixel")
+        if isinstance(t, (int, float)) and isinstance(xy, list) and len(xy) >= 2:
+            gold_candidates.append(
+                {
+                    "time_sec": float(t),
+                    "x": float(xy[0]),
+                    "y": float(xy[1]),
+                    "source": item.get("reference_source"),
+                }
+            )
+
+    # Backward-compatible fallback.
+    if not gold_candidates:
+        if not isinstance(default_time, (int, float)) or not isinstance(default_point, list) or len(default_point) < 2:
+            return None
+        gold_candidates.append(
+            {
+                "time_sec": float(default_time),
+                "x": float(default_point[0]),
+                "y": float(default_point[1]),
+                "source": "default_single_gold",
+            }
+        )
 
     parsed = _parse_time_and_point_prediction(prediction)
     pred_time = parsed.get("time_sec")
     pred_x = parsed.get("x")
     pred_y = parsed.get("y")
 
-    time_ok = isinstance(pred_time, (int, float)) and abs(float(pred_time) - float(gold_time)) <= OOS_TIME_TOLERANCE_SEC
-    coord_ok = (
-        isinstance(pred_x, (int, float))
-        and isinstance(pred_y, (int, float))
-        and abs(float(pred_x) - float(gold_point[0])) <= OOS_COORD_TOLERANCE_NORM
-        and abs(float(pred_y) - float(gold_point[1])) <= OOS_COORD_TOLERANCE_NORM
-    )
-    correct = float(time_ok and coord_ok)
+    best = None
+    for gold in gold_candidates:
+        if not all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y]):
+            time_ok = False
+            coord_ok = False
+            time_err = None
+            coord_err = None
+        else:
+            time_err = abs(float(pred_time) - float(gold["time_sec"]))
+            coord_err = max(
+                abs(float(pred_x) - float(gold["x"])),
+                abs(float(pred_y) - float(gold["y"])),
+            )
+            time_ok = time_err <= OOS_TIME_TOLERANCE_SEC
+            coord_ok = coord_err <= OOS_COORD_TOLERANCE_NORM
+
+        candidate_score = float(time_ok and coord_ok)
+
+        row = {
+            **gold,
+            "time_ok": bool(time_ok),
+            "coord_ok": bool(coord_ok),
+            "accuracy": candidate_score,
+            "time_error_sec": time_err,
+            "coord_error_linf": coord_err,
+        }
+
+        if best is None:
+            best = row
+        elif row["accuracy"] > best["accuracy"]:
+            best = row
+        elif row["accuracy"] == best["accuracy"]:
+            prev_err = (
+                float("inf") if best["time_error_sec"] is None else best["time_error_sec"]
+            ) + (
+                float("inf") if best["coord_error_linf"] is None else best["coord_error_linf"]
+            )
+            new_err = (
+                float("inf") if row["time_error_sec"] is None else row["time_error_sec"]
+            ) + (
+                float("inf") if row["coord_error_linf"] is None else row["coord_error_linf"]
+            )
+            if new_err < prev_err:
+                best = row
+
+    correct = float(best["accuracy"]) if best is not None else 0.0
 
     enriched = dict(doc)
     enriched["prediction"] = prediction
@@ -1183,58 +1620,40 @@ def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optiona
     enriched["pred_choice"] = None
     enriched["gold_idx"] = None
     enriched["gold_choice"] = (
-        f"{_seconds_to_time_token(float(gold_time), video_idx=1)}; "
-        f"Point=({_format_float(float(gold_point[0]), 4)}, {_format_float(float(gold_point[1]), 4)})"
+        f"{_seconds_to_time_token(float(gold_candidates[0]['time_sec']), video_idx=1)}; "
+        f"Point=({_format_float(float(gold_candidates[0]['x']), 4)}, "
+        f"{_format_float(float(gold_candidates[0]['y']), 4)})"
     )
     enriched["gold_idxs"] = []
-    enriched["gold_choices"] = [enriched["gold_choice"]]
+    enriched["gold_choices"] = [
+        f"{_seconds_to_time_token(float(g['time_sec']), video_idx=1)}; "
+        f"Point=({_format_float(float(g['x']), 4)}, {_format_float(float(g['y']), 4)})"
+        for g in gold_candidates
+    ]
     enriched["accuracy"] = correct
     enriched["parsed"] = all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y])
     enriched["scorable"] = True
     enriched["pred_time_sec"] = pred_time
     enriched["pred_point_x"] = pred_x
     enriched["pred_point_y"] = pred_y
-    enriched["gold_time_sec"] = float(gold_time)
-    enriched["gold_point_x"] = float(gold_point[0])
-    enriched["gold_point_y"] = float(gold_point[1])
+
+    enriched["matched_gold_time_sec"] = None if best is None else best["time_sec"]
+    enriched["matched_gold_point_x"] = None if best is None else best["x"]
+    enriched["matched_gold_point_y"] = None if best is None else best["y"]
+    enriched["matched_gold_source"] = None if best is None else best["source"]
+
+    enriched["gold_time_sec"] = float(gold_candidates[0]["time_sec"])
+    enriched["gold_point_x"] = float(gold_candidates[0]["x"])
+    enriched["gold_point_y"] = float(gold_candidates[0]["y"])
+    enriched["all_gold_time_point_candidates"] = gold_candidates
+
     enriched["time_tolerance_sec"] = OOS_TIME_TOLERANCE_SEC
     enriched["coord_tolerance_norm"] = OOS_COORD_TOLERANCE_NORM
-    enriched["time_error_sec"] = None if pred_time is None else abs(float(pred_time) - float(gold_time))
-    enriched["coord_error_linf"] = None if pred_x is None or pred_y is None else max(
-        abs(float(pred_x) - float(gold_point[0])),
-        abs(float(pred_y) - float(gold_point[1])),
-    )
-    enriched["time_within_tolerance"] = bool(time_ok)
-    enriched["coord_within_tolerance"] = bool(coord_ok)
-    _log_sample_result(doc, prediction, None, [], correct)
+    enriched["time_error_sec"] = None if best is None else best["time_error_sec"]
+    enriched["coord_error_linf"] = None if best is None else best["coord_error_linf"]
+    enriched["time_within_tolerance"] = False if best is None else bool(best["time_ok"])
+    enriched["coord_within_tolerance"] = False if best is None else bool(best["coord_ok"])
     return {"oos_score": enriched}
-
-
-def _log_sample_result(doc: Dict[str, Any], prediction: str, pred_idx: Optional[int], gold_idxs: List[int], correct: float):
-    if not DEBUG_EVAL:
-        return
-    if DEBUG_FAIL_ONLY and correct == 1.0:
-        return
-
-    pred_choice = doc["choices"][pred_idx] if pred_idx is not None and 0 <= pred_idx < len(doc.get("choices", [])) else None
-
-    gold_choice = None
-    if doc.get("answer_idx") is not None and 0 <= int(doc["answer_idx"]) < len(doc.get("choices", [])):
-        gold_choice = doc["choices"][int(doc["answer_idx"])]
-    elif doc.get("answer") not in (None, ""):
-        gold_choice = doc.get("answer")
-    elif doc.get("acceptable_answers"):
-        gold_choice = doc["acceptable_answers"][0]
-
-    eval_logger.info("\n===== SAMPLE =====")
-    eval_logger.info(f"ID: {doc.get('id')}")
-    eval_logger.info(f"Q: {doc.get('question')}")
-    eval_logger.info(f"Choices: {doc.get('choices')}")
-    eval_logger.info(f"\n--- RAW MODEL OUTPUT ---\n{prediction}")
-    eval_logger.info(f"\nPredicted: {pred_choice if pred_choice is not None else _clean_prediction(prediction)}")
-    eval_logger.info(f"Gold: {gold_choice}")
-    eval_logger.info("========================\n")
-
 
 # def oos_process_results(doc: Dict[str, Any], results) -> Dict[str, Any]:
 #     prediction = results[0] if isinstance(results, (list, tuple)) else results
@@ -1278,7 +1697,6 @@ def oos_process_results(doc: Dict[str, Any], results) -> Dict[str, Any]:
         enriched["accuracy"] = correct
         enriched["parsed"] = pred_idx != -1
         enriched["scorable"] = True
-        _log_sample_result(doc, prediction, pred_idx, gold_idxs, correct)
         return {"oos_score": enriched}
 
     valid_text_answers = []
@@ -1303,7 +1721,6 @@ def oos_process_results(doc: Dict[str, Any], results) -> Dict[str, Any]:
         enriched["accuracy"] = correct
         enriched["parsed"] = pred_clean != ""
         enriched["scorable"] = True
-        _log_sample_result(doc, prediction, None, [], correct)
         return {"oos_score": enriched}
 
     enriched = dict(doc)
