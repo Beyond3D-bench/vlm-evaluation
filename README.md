@@ -4,6 +4,16 @@ This repository is a customized LMMS-Eval-based evaluation repo for out-of-sight
 
 The original LMMS-Eval documentation is still useful for general framework internals, model registration, and task configuration. This README focuses only on the customized pieces used in this repo.
 
+## New User Checklist
+
+For a new machine or user, the usual setup path is:
+
+1. Create and activate a Python environment, then install this repo.
+2. Edit `lmms_eval/tasks/oos_videoqa/oos_videoqa_multi_turn.yaml` so `dataset_kwargs.data_files.test` points to your local OOS JSONL file.
+3. Edit `launchers/oos_env.sh` for local paths and secrets: Hugging Face/Ollama tokens, cache directories, output directory, ffmpeg path, and `VLM3R_REPO` if using VLM-3R.
+4. (Optional) Run a short smoke test with `OOS_LIMIT=2`.
+5. Submit the full job with `launchers/slurm_oos_eval.sh` or run locally with `launchers/run_oos_eval.sh`.
+
 ## Environment Setup
 
 Start from a fresh clone and create one Python environment inside the repo:
@@ -15,16 +25,30 @@ source .venv/bin/activate
 uv pip install -e ".[all]"
 ```
 
-`.[all]` installs the main evaluation dependencies plus the TorchCodec video backend. It does not install Decord. If you need Decord, use:
+`.[all]` installs the main evaluation dependencies.
+
+The OOS task uses `ffmpeg` to extract video prefixes and frames. First check it on the same machine where the evaluation will run:
 
 ```bash
-uv pip install -e ".[all,video-legacy]"
+ffmpeg -version
+uname -m
 ```
 
-If you are using a private or gated Hugging Face model, set a token:
+If `ffmpeg -version` works, prefer that existing install:
+
+```bash
+export FFMPEG_PATH="$(command -v ffmpeg)"
+```
+
+If ffmpeg is not available, install or choose a binary that matches `uname -m`. For example, use an x86_64 build on x86_64 nodes and an aarch64/ARM build on aarch64 nodes. Do not copy a binary from a different architecture.
+
+Install ffmpeg from the same architecture you will run on. If evaluation runs on a compute node, install or verify ffmpeg inside an interactive session on that node type, not only on the login node. 
+
+(optional)If you are using a private/gated Hugging Face model or ollama cloud, set a token:
 
 ```bash
 export HF_TOKEN=<your-token>
+export OLLAMA_API_KEY=<your-api-key>
 ```
 
 Run all commands below from inside `lmms-eval`.
@@ -35,14 +59,14 @@ Most models use the base environment above. VLM-3R is the exception because it i
 
 | Model preset | `lmms-eval` model name | Extra setup |
 | --- | --- | --- |
-| `qwen3_6` | `qwen3_5` | Base env is enough. Uses `Qwen/Qwen3.6-27B` by default. |
+| `qwen3_6` | `qwen3_5` | Base env is enough. Uses Qwen-VL utilities and TorchCodec by default. |
 | `qwen3_vl` | `qwen3_vl_chat_fixed` | Base env is enough. Uses Qwen-VL utilities and TorchCodec by default. |
 | `llava` | `llava_onevision1_5_chat_fixed` | You may need to downgrade the transformer package version. |
 | `internvl` | `internvl_hf_chat` | Base env plus any model-specific packages required by the selected InternVL checkpoint. |
 | `phi4` | `phi4_multimodal_chat_fixed` | Base env plus any model-specific packages required by Phi-4 multimodal. |
-| `vlm3r` | `vlm_3r` | Requires Decord and a local VLM-3R clone on `PYTHONPATH`. |
+| `vlm3r` | `vlm_3r` | Requires a local VLM-3R clone on `PYTHONPATH`. |
 
-For VLM-3R, create the env with Decord support and clone the external repo:
+For VLM-3R, create an env and clone the external repo:
 
 ```bash
 cd <your-workspace>
@@ -51,12 +75,13 @@ git clone https://github.com/VITA-Group/VLM-3R.git
 cd lmms-eval
 uv venv .venv-vlm3r
 source .venv-vlm3r/bin/activate
-uv pip install -e ".[all,video-legacy]"
+uv pip install -e ".[all]"
 
 # Install VLM-3R requirements according to that repository README.
+# The local wrapper can decode videos with ffmpeg when Decord is unavailable.
 # Common patterns are one of:
 uv pip install -e ../VLM-3R
-# or:
+# or, if you want the full upstream environment:
 uv pip install -r ../VLM-3R/requirements.txt
 
 export VLM3R_REPO=<your-workspace>/VLM-3R
@@ -87,7 +112,7 @@ The active task YAML is:
 lmms_eval/tasks/oos_videoqa/oos_videoqa_multi_turn.yaml
 ```
 
-Important task hooks:
+Important task hooks (don't change):
 
 ```yaml
 task: oos_videoqa
@@ -104,13 +129,19 @@ cluster_key: source_video_id
 
 ## Data
 
-The current YAML reads a local JSONL path:
+The active task YAML is:
 
 ```text
-/work/courses/3dv/team1/data/vqa.jsonl
+lmms_eval/tasks/oos_videoqa/oos_videoqa_multi_turn.yaml
 ```
 
-On a new machine, edit `lmms_eval/tasks/oos_videoqa/oos_videoqa_multi_turn.yaml` so `dataset_kwargs.data_files.test` points to your local JSONL file.
+On a new machine, edit `dataset_kwargs.data_files.test` in that YAML so it points to your local OOS JSONL file, for example:
+
+```yaml
+dataset_kwargs:
+  data_files:
+    test: /work/courses/3dv/team1/data/vqa/selected_250_sorted_ranges.jsonl
+```
 
 ## Visual Inputs
 
@@ -128,8 +159,8 @@ export OOS_NO_VIDEO_INPUT=0
 export OOS_VIDEO_CACHE_DIR=.cache/oos_video
 export OOS_PREPROCESS_VIDEO=0
 export OOS_TARGET_FPS=1
-export OOS_RESIZE_WIDTH=224
-export OOS_RESIZE_HEIGHT=224
+export OOS_RESIZE_WIDTH=448
+export OOS_RESIZE_HEIGHT=448
 export OOS_VIDEO_WIDTH=448
 export OOS_VIDEO_HEIGHT=448
 ```
@@ -152,16 +183,6 @@ Keep document shuffling disabled for `pred` mode so dependent steps are evaluate
 export LMMS_EVAL_SHUFFLE_DOCS=0
 ```
 
-## Message Function
-
-The recommended default is:
-
-```yaml
-doc_to_messages: !function utils.oos_doc_to_messages_with_visuals
-```
-
-This builds the full chat prompt on the task side: system prompt, history turns, current question, and visual content. The fixed Qwen/LLaVA wrappers and the VLM-3R/InternVL chat paths can consume this cleaner message format. The wrappers still apply each model-specific chat template afterward.
-
 ## Scoring
 
 `utils.oos_process_results` scores both multiple-choice and open time/point predictions. `utils.oos_aggregate_results` reports overall accuracy and, when available, step-level and trajectory-level metrics.
@@ -175,15 +196,24 @@ export OOS_COORD_TOLERANCE_NORM=0.2
 
 ## Running
 
-The launch path is organized under `launchers/`: shared logic lives in `common.sh`, model presets live in `models/`, and ETH Team 1 shortcuts live in `team1/`. The generic runner works on a laptop, workstation, or cluster node.
+The launch path is organized under `launchers/`: shared logic lives in `common.sh`, model presets live in `models/`. The generic runner works on a laptop, workstation, or cluster node.
 
-Configure the environment:
+Configure the launcher environment in `launchers/oos_env.sh`. At minimum, check these values before running:
 
 ```bash
-# launchers/oos_env.sh is the committed Team 1 example config.
-# Edit launchers/oos_env.sh for your HF token, cache paths, output path, and VLM3R_REPO if needed.
-# launchers/run_oos_eval.sh loads this file automatically.
+export HF_TOKEN=...                  # or provide SECRET_KEY/HF_TOKEN in your shell
+export OLLAMA_API_KEY=...            # only needed for LiteLLM/Ollama-style runs
+export HF_HOME=...
+export HF_DATASETS_CACHE=...
+export LMMS_EVAL_CACHE=...
+export TMPDIR=...
+export OOS_VIDEO_CACHE_DIR=...
+export OOS_OUTPUT_DIR=...
+export FFMPEG_PATH=...
+export VLM3R_REPO=...                # only needed for OOS_MODEL=vlm3r
 ```
+
+`launchers/run_oos_eval.sh` loads `launchers/oos_env.sh` automatically.
 
 Run locally:
 
@@ -205,7 +235,7 @@ OOS_MODEL=qwen3_6 OOS_LIMIT=2 bash launchers/run_oos_eval.sh
 Submit through Slurm:
 
 ```bash
-OOS_MODEL=qwen3_6 OOS_VENV=.venv-gb10/bin/activate sbatch launchers/slurm_oos_eval.sh
+OOS_MODEL=qwen3_6 OOS_VENV=.venv/bin/activate sbatch launchers/slurm_oos_eval.sh
 ```
 
 `OOS_VENV` may be an absolute path or a path relative to the directory where you run `sbatch`. Edit the `#SBATCH` account, partition, GPU, and time lines in `launchers/slurm_oos_eval.sh` for your cluster. 

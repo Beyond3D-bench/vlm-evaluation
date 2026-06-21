@@ -22,6 +22,7 @@ export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-gold}"          # none, gold, pred
 export LMMS_EVAL_SHUFFLE_DOCS="${LMMS_EVAL_SHUFFLE_DOCS:-0}" # keep 0 for pred mode
 export OOS_NO_VIDEO_INPUT="${OOS_NO_VIDEO_INPUT:-0}"
 export OOS_CHAT_DEBUG="${OOS_CHAT_DEBUG:-1}" # set to 1 to print model prompt/media diagnostics
+
 # Video preprocessing and scoring.
 # Currently the input video is already preprocessed to fps=1 & 448x448, so we don't need to preprocess it again.
 export OOS_PREPROCESS_VIDEO="${OOS_PREPROCESS_VIDEO:-0}"

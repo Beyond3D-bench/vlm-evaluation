@@ -11,7 +11,45 @@ This folder has one generic OOS evaluation path and small model presets.
 
 FFmpeg:
 
-`oos_env.sh` sets `FFMPEG_PATH`, `PATH`, and `LD_LIBRARY_PATH` for the Team 1 ffmpeg install. On another machine, change `FFMPEG_PATH` to your ffmpeg binary, or leave it unset if `ffmpeg` is already available on `PATH`.
+The OOS task uses ffmpeg for video prefix/frame extraction. Check on the machine where the run will execute:
+
+```bash
+ffmpeg -version
+uname -m
+```
+
+If `ffmpeg -version` works, use it with `export FFMPEG_PATH="$(command -v ffmpeg)"`. If it is missing, install or choose a binary for the node architecture shown by `uname -m`. Do not copy an ffmpeg binary from a different architecture.
+
+Install ffmpeg from the same architecture as the node that will run evaluation. For an interactive compute-node shell, adapt this to your cluster:
+
+```bash
+srun --time=01:00:00 --pty bash
+uname -m
+```
+
+Typical choices:
+
+```bash
+# Cluster module
+module avail ffmpeg
+module load ffmpeg
+export FFMPEG_PATH="$(command -v ffmpeg)"
+
+# Venv fallback
+uv pip install imageio-ffmpeg
+export FFMPEG_PATH="$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
+
+# Cluster-approved package manager or prebuilt binary
+export FFMPEG_PREFIX=/path/to/ffmpeg-prefix-for-$(uname -m)
+export FFMPEG_PATH=$FFMPEG_PREFIX/bin/ffmpeg
+```
+
+For shared-library installs, also set:
+
+```bash
+export LD_LIBRARY_PATH=$FFMPEG_PREFIX/lib:${LD_LIBRARY_PATH:-}
+export PATH=$FFMPEG_PREFIX/bin:${PATH}
+```
 
 Examples:
 
