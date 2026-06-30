@@ -9,7 +9,7 @@ fi
 LAUNCHER_DIR="${LAUNCHER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$LAUNCHER_DIR/.." && pwd)}"
 
-OOS_MODEL_PRESETS="qwen3_6 qwen3_vl llava internvl phi4 vlm3r custom"
+OOS_MODEL_PRESETS="qwen3_6 qwen3_vl llava internvl phi4 vlm3r stream3d_vlm custom"
 
 load_oos_env() {
   local env_file="${OOS_ENV_FILE:-launchers/oos_env.sh}"

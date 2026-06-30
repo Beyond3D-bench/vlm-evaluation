@@ -1,24 +1,36 @@
 #!/usr/bin/env bash
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
 # Team 1 example config. Edit local paths/model choices, then run:
 #   bash launchers/run_oos_eval.sh
-
+export USER="fangma"
 # Required for private Hugging Face models or gated datasets.
 export HF_TOKEN="${SECRET_KEY:-${HF_TOKEN:-}}"
+# export HF_HUB_DISABLE_XET=1
+
+# export HF_HOME="/work/courses/3dv/team1/.cache/huggingface"
+# export HF_HUB_CACHE="/work/courses/3dv/team1/.cache/huggingface/hub"
+# export HF_XET_CACHE="/work/courses/3dv/team1/.cache/huggingface/xet"
+# export HF_DATASETS_CACHE="/work/courses/3dv/team1/.cache/huggingface/datasets"
+# export TMPDIR="/work/courses/3dv/team1/tmp"
 
 # Local cache/output directories. Defaults are relative to the repository root
 # when launchers/run_oos_eval.sh is used.
-export HF_HOME="${HF_HOME:-/work/scratch/fangma/hf_cache}"
+export HF_HOME="${HF_HOME:-/work/scratch/$USER/hf_cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
-export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/work/scratch/fangma/hf_cache/datasets}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/work/scratch/$USER/hf_cache/datasets}"
 export LMMS_EVAL_DATASETS_CACHE="${LMMS_EVAL_DATASETS_CACHE:-$HF_DATASETS_CACHE}"
-export LMMS_EVAL_CACHE="${LMMS_EVAL_CACHE:-/work/scratch/fangma/lmms_eval_cache}"
-export TMPDIR="${TMPDIR:-/work/scratch/fangma/tmp}"
-export OOS_VIDEO_CACHE_DIR="${OOS_VIDEO_CACHE_DIR:-/work/scratch/fangma/oos_video_cache}"
+export LMMS_EVAL_CACHE="${LMMS_EVAL_CACHE:-/work/scratch/$USER/lmms_eval_cache}"
+export TMPDIR="${TMPDIR:-/work/scratch/$USER/tmp}"
+export OOS_VIDEO_CACHE_DIR="${OOS_VIDEO_CACHE_DIR:-/work/scratch/$USER/oos_video_cache}"
 export OOS_OUTPUT_DIR="${OOS_OUTPUT_DIR:-/work/courses/3dv/team1/lmms-eval/outputs/oos_videoqa}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 # OOS task behavior.
-export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-gold}"          # none, gold, pred
+export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-none}"          # none, gold, pred
 export LMMS_EVAL_SHUFFLE_DOCS="${LMMS_EVAL_SHUFFLE_DOCS:-0}" # keep 0 for pred mode
 export OOS_NO_VIDEO_INPUT="${OOS_NO_VIDEO_INPUT:-0}"
 export OOS_CHAT_DEBUG="${OOS_CHAT_DEBUG:-1}" # set to 1 to print model prompt/media diagnostics
