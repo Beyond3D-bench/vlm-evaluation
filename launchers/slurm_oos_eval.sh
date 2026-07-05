@@ -21,7 +21,7 @@ else
 fi
 cd "$REPO_DIR"
 
-VENV_ACTIVATE="${OOS_VENV:-.venv-gb10-vlm3r/bin/activate}"
+VENV_ACTIVATE="${OOS_VENV:-.venv-gb10-stream3d/bin/activate}"
 if [ ! -f "$VENV_ACTIVATE" ]; then
   echo "Missing virtualenv activate script: $VENV_ACTIVATE" >&2
   echo "Current directory: $(pwd)" >&2
@@ -31,7 +31,7 @@ fi
 source "$VENV_ACTIVATE"
 
 # Optional debug filter; override at submit time with OOS_DEBUG_STEP=<step>.
-# export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-5b}"
+export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-}"
 
 if command -v srun >/dev/null 2>&1; then
   srun bash launchers/run_oos_eval.sh

@@ -95,7 +95,11 @@ class VLM3R(lmms):
         batch_size: int = 1,
         for_get_frames_num: int = 32,
         mm_spatial_pool_stride: int = 2,
-        mm_spatial_pool_mode: str = "average",
+        mm_spatial_pool_mode: str = "bilinear",
+        mm_resampler_type: str = "spatial_pool",
+        mm_spatial_pool_out_channels: int = 1024,
+        mm_pooling_position: str = "after",
+        delay_load: bool = False,
         mm_newline_position: str = "grid",
         load_8bit: bool = False,
         load_4bit: bool = False,
@@ -108,6 +112,9 @@ class VLM3R(lmms):
         disable_cudnn: bool = True,
         system_prompt: str = "",
         add_time_instruction: bool = False,
+        export_point_cloud: bool = False,
+        point_cloud_output_dir: str = "point_clouds",
+        point_cloud_export_limit: int = 0,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -120,15 +127,25 @@ class VLM3R(lmms):
             raise ValueError("VLM-3R wrapper currently supports batch_size=1 only.")
 
         self.for_get_frames_num = int(for_get_frames_num)
+        self.mm_resampler_type = mm_resampler_type
         self.mm_spatial_pool_stride = int(mm_spatial_pool_stride)
+        self.mm_spatial_pool_out_channels = int(mm_spatial_pool_out_channels)
         self.mm_spatial_pool_mode = mm_spatial_pool_mode
         self.mm_newline_position = mm_newline_position
+        self.mm_resampler_location = mm_pooling_position
+        self.delay_load = self._as_bool(delay_load)
         self.default_max_new_tokens = int(max_new_tokens)
         self.default_temperature = float(temperature)
         self.default_top_p = float(top_p)
         self.default_num_beams = int(num_beams)
         self.system_prompt = self._resolve_system_prompt(system_prompt)
         self.add_time_instruction = self._as_bool(add_time_instruction)
+        self.export_point_cloud = self._as_bool(export_point_cloud)
+        self.point_cloud_output_dir = point_cloud_output_dir
+        self.point_cloud_export_limit = int(point_cloud_export_limit)
+        self._point_cloud_exports = 0
+        if self.export_point_cloud:
+            os.makedirs(self.point_cloud_output_dir, exist_ok=True)
         self.disable_cudnn = self._as_bool(disable_cudnn)
         if self.disable_cudnn:
             torch.backends.cudnn.enabled = False
@@ -149,9 +166,14 @@ class VLM3R(lmms):
 
         model_name = get_model_name_from_path(pretrained)
         overwrite_config = {
-            "mm_spatial_pool_mode": self.mm_spatial_pool_mode,
+            "mm_resampler_type": self.mm_resampler_type,
             "mm_spatial_pool_stride": self.mm_spatial_pool_stride,
+            "mm_spatial_pool_out_channels": self.mm_spatial_pool_out_channels,
+            "mm_spatial_pool_mode": self.mm_spatial_pool_mode,
+            "mm_pooling_position": self.mm_resampler_location,
             "mm_newline_position": self.mm_newline_position,
+            "add_faster_video": False,
+            "delay_load": self.delay_load,
         }
 
         self.cfg_pretrained = AutoConfig.from_pretrained(pretrained)
@@ -172,6 +194,11 @@ class VLM3R(lmms):
 
         if self._tokenizer.pad_token_id is None and "qwen" in getattr(self._tokenizer, "name_or_path", "").lower():
             self._tokenizer.pad_token_id = 151643
+
+        spatial_tower = self.model.get_model().get_spatial_tower() if hasattr(self.model, "get_model") else None
+        if spatial_tower is not None and hasattr(spatial_tower, "config"):
+            spatial_tower.config.export_point_cloud = self.export_point_cloud
+            spatial_tower.config.point_cloud_output_dir = self.point_cloud_output_dir
 
     @property
     def model(self):
@@ -195,6 +222,22 @@ class VLM3R(lmms):
     def _dbg(self, msg: str) -> None:
         if self._debug_enabled() and self.rank == 0:
             print(msg, flush=True)
+
+    def _safe_filename_part(self, value: Any) -> str:
+        text = str(value if value is not None else "unknown")
+        return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in text)[:160]
+
+    def _point_cloud_output_paths(self, doc: Dict[str, Any], doc_id: Any) -> Optional[List[str]]:
+        if not self.export_point_cloud:
+            return None
+        if self.point_cloud_export_limit > 0 and self._point_cloud_exports >= self.point_cloud_export_limit:
+            return None
+        traj_id = self._safe_filename_part(doc.get("trajectory_id", doc.get("source_video_id", doc.get("id", doc_id))))
+        step_id = self._safe_filename_part(doc.get("step", doc_id))
+        rank_dir = os.path.join(self.point_cloud_output_dir, f"rank_{self.rank}")
+        os.makedirs(rank_dir, exist_ok=True)
+        self._point_cloud_exports += 1
+        return [os.path.join(rank_dir, f"{traj_id}_step_{step_id}_doc_{doc_id}.ply")]
 
     def _as_bool(self, value: Any) -> bool:
         if isinstance(value, str):
@@ -378,7 +421,7 @@ class VLM3R(lmms):
                 )
             video_tensor = self.image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().to(self.device)
             tensors.append(video_tensor)
-            modalities = "video"
+            modalities = ["video" for _ in tensors]
         elif images:
             pil_images = [Image.open(path).convert("RGB") for path in images]
             image_tensor = self.image_processor.preprocess(pil_images, return_tensors="pt")["pixel_values"]
@@ -529,6 +572,10 @@ class VLM3R(lmms):
             if visual_tensors:
                 generate_args["images"] = visual_tensors
                 generate_args["modalities"] = modalities
+                point_cloud_output_paths = self._point_cloud_output_paths(doc, doc_id)
+                if point_cloud_output_paths:
+                    generate_args["point_cloud_output_paths"] = point_cloud_output_paths
+                    self._dbg(f"[VLM-3R] exporting point cloud to {point_cloud_output_paths[0]}")
 
             start_time = time.time()
             with torch.inference_mode():

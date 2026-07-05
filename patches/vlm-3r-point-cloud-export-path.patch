@@ -1,0 +1,94 @@
+diff --git a/llava/model/language_model/llava_qwen.py b/llava/model/language_model/llava_qwen.py
+index 34215fa..a3d97c2 100755
+--- a/llava/model/language_model/llava_qwen.py
++++ b/llava/model/language_model/llava_qwen.py
+@@ -137,6 +137,7 @@ def generate(
+         point_maps: Optional[torch.Tensor] = None,
+         image_sizes: Optional[torch.Tensor] = None,
+         modalities: Optional[List[str]] = ["image"],
++        point_cloud_output_paths: Optional[List[str]] = None,
+         **kwargs,
+     ) -> Union[GenerateOutput, torch.LongTensor]:
+         position_ids = kwargs.pop("position_ids", None)
+@@ -145,7 +146,7 @@ def generate(
+             raise NotImplementedError("`inputs_embeds` is not supported")
+ 
+         if images is not None:
+-            (inputs, position_ids, attention_mask, _, inputs_embeds, _) = self.prepare_inputs_labels_for_multimodal(inputs, position_ids, attention_mask, None, None, images, spatial_features, point_maps, modalities, image_sizes=image_sizes)
++            (inputs, position_ids, attention_mask, _, inputs_embeds, _) = self.prepare_inputs_labels_for_multimodal(inputs, position_ids, attention_mask, None, None, images, spatial_features, point_maps, modalities, image_sizes=image_sizes, point_cloud_output_paths=point_cloud_output_paths)
+         else:
+             inputs_embeds = self.get_model().embed_tokens(inputs)
+ 
+diff --git a/llava/model/llava_arch.py b/llava/model/llava_arch.py
+index 772c1ce..ed1c078 100755
+--- a/llava/model/llava_arch.py
++++ b/llava/model/llava_arch.py
+@@ -307,7 +307,7 @@ def get_2dPool(self, image_feature, stride=2):
+ 
+     #     return image_features
+ 
+-    def encode_images(self, images, spatial_features=None, point_maps=None):
++    def encode_images(self, images, spatial_features=None, point_maps=None, point_cloud_output_paths=None):
+         # vision features
+         image_features = self.get_model().get_vision_tower()(images)
+         # fuse with spatial features
+@@ -324,7 +324,7 @@ def encode_images(self, images, spatial_features=None, point_maps=None):
+                 if spatial_features is not None and 'cut3r' in spatial_encoder_type:
+                     camera_tokens, patch_tokens = spatial_features[0]["camera_tokens"], spatial_features[0]["patch_tokens"]
+                 else:
+-                    camera_tokens, patch_tokens = self.get_model().get_spatial_tower()(images)
++                    camera_tokens, patch_tokens = self.get_model().get_spatial_tower()(images, point_cloud_output_paths=point_cloud_output_paths)
+                 
+                 if fusion_block_type == 'cross_attention':
+                     # fuse with spatial features
+@@ -424,7 +424,7 @@ def add_token_per_frame(self, image_feature):
+         image_feature = image_feature.permute(1, 2, 0).contiguous()
+         return image_feature
+ 
+-    def prepare_inputs_labels_for_multimodal(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, spatial_features=None, point_maps=None, modalities=["image"], image_sizes=None):
++    def prepare_inputs_labels_for_multimodal(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, spatial_features=None, point_maps=None, modalities=["image"], image_sizes=None, point_cloud_output_paths=None):
+         vision_tower = self.get_vision_tower()
+         # rank_print(modalities)
+         if vision_tower is None or images is None or input_ids.shape[1] == 1:
+@@ -452,7 +452,7 @@ def prepare_inputs_labels_for_multimodal(self, input_ids, position_ids, attentio
+ 
+             concat_images = torch.cat([image for image in images_list], dim=0)
+             split_sizes = [image.shape[0] for image in images_list]
+-            encoded_image_features = self.encode_images(concat_images, spatial_features, point_maps)
++            encoded_image_features = self.encode_images(concat_images, spatial_features, point_maps, point_cloud_output_paths=point_cloud_output_paths)
+             # if self.get_model().get_spatial_tower() is not None:
+             #     if spatial_features is None:
+             #         camera_tokens, patch_tokens = self.encode_spatial_features(concat_images)
+@@ -625,7 +625,7 @@ def prepare_inputs_labels_for_multimodal(self, input_ids, position_ids, attentio
+             else:
+                 raise ValueError(f"Unexpected mm_patch_merge_type: {self.config.mm_patch_merge_type}")
+         else:
+-            image_features = self.encode_images(images)
++            image_features = self.encode_images(images, point_cloud_output_paths=point_cloud_output_paths)
+ 
+         # TODO: image start / end is not implemented here to support pretraining.
+         if getattr(self.config, "tune_mm_mlp_adapter", False) and getattr(self.config, "mm_use_im_start_end", False):
+diff --git a/llava/model/multimodal_spatial_encoder/cut3r_spatial_encoder.py b/llava/model/multimodal_spatial_encoder/cut3r_spatial_encoder.py
+index 5c2a111..4d4774d 100644
+--- a/llava/model/multimodal_spatial_encoder/cut3r_spatial_encoder.py
++++ b/llava/model/multimodal_spatial_encoder/cut3r_spatial_encoder.py
+@@ -509,16 +509,16 @@ def load_model(self, device_map=None):
+ 
+         self.is_loaded = True
+ 
+-    def forward(self, images):
++    def forward(self, images, point_cloud_output_paths=None):
+         if type(images) is list:
+             image_features = []
+             for image in images:
+-                image_forward_out = self.spatial_tower(image.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True)
++                image_forward_out = self.spatial_tower(image.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True, point_cloud_output_paths=point_cloud_output_paths)
+                 image_feature = image_forward_out.last_hidden_state.to(image.dtype)
+                 # assert image_features.shape[-2] == 729
+                 image_features.append(image_feature)
+         else:
+-            image_features = self.spatial_tower(images.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
++            image_features = self.spatial_tower(images.to(device=self.device, dtype=self.dtype), output_hidden_states=True, point_cloud_output_paths=point_cloud_output_paths)
+             # image_features = image_features_forward_out.to(images.dtype)
+             # assert image_features.shape[-2] == 729
+ 

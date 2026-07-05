@@ -22,6 +22,18 @@ OOS_HISTORY_MODE = os.getenv("OOS_HISTORY_MODE", "gold").strip().lower()
 
 OOS_TIME_TOLERANCE_SEC = float(os.getenv("OOS_TIME_TOLERANCE_SEC", "1.0"))
 OOS_COORD_TOLERANCE_NORM = float(os.getenv("OOS_COORD_TOLERANCE_NORM", "0.08"))
+OOS_STEP23_EVAL_MODE = os.getenv("OOS_STEP23_EVAL_MODE", "time_point").strip().lower()
+
+OOS_VIDEO_CONTEXT = os.getenv("OOS_VIDEO_CONTEXT", "prefix").strip().lower()
+OOS_FULL_VIDEO_CONTEXT_VALUES = {"full", "entire", "all"}
+
+
+def _use_full_video_context() -> bool:
+    return OOS_VIDEO_CONTEXT in OOS_FULL_VIDEO_CONTEXT_VALUES
+
+
+def _step23_time_only_eval() -> bool:
+    return OOS_STEP23_EVAL_MODE in {"time", "time_only", "time-only"}
 
 def _step_id(x: Any) -> str:
     return str(x).strip()
@@ -151,6 +163,22 @@ def _get_step4_bev_image_path(doc: Dict[str, Any]) -> Optional[str]:
 # def _is_step2_last_visible(doc: Dict[str, Any]) -> bool:
 #     return str(doc.get("step_question_class", "")).strip().lower() == "oos_step2_last_visible"
 def _time_point_instruction(doc: Dict[str, Any]) -> str:
+    # if _step23_time_only_eval():
+    #     return (
+    #         # "Track the lid throughout the following timestamped video frames. Remember the most recent timestamp where the lid is visible. After the final frame, output only that timestamp."
+    #         # "Estimate only the requested event time. "
+    #         # "Output exactly one line as an actual timestamp in this format <TIME HH:MM:SS.s video 1>. "
+    #         # "for example: <TIME 00:00:50.0>."
+    #         # "This means the event occurs at 50.0 seconds in the video"
+    #         "Track the target object throughout the timestamped video frames."
+    #         "Find the most recent frame where the target object is visible."
+    #         "Then compute how many seconds before the final video frame this happened."
+    #         "Output only one number in seconds, using this format:"
+    #         " <AGO 12.0>"
+    #         "For example, if the video ends at 00:01:00.0 and the object was last visible at 00:00:50.0, output:"
+    #         " <AGO 10.0>"
+    #     )
+
     example = "Example format: <TIME 00:00:12.3 video 1>; Point=(0.45, 0.62)"
 
     return (
@@ -746,6 +774,13 @@ def _history_answer_from_step(step: Dict[str, Any], object_name: Optional[str] =
         x = m.group(2)
         y = m.group(3)
 
+        if _step23_time_only_eval():
+            if qclass == "oos_step2_last_visible":
+                return f"{obj_name} was last visible at {time_token}."
+            if qclass == "oos_step3_last_placement":
+                return f"{obj_name} stopped moving at {time_token}."
+            return time_token
+
         if qclass == "oos_step2_last_visible":
             return (
                 f"{obj_name} was last visible at {time_token}, "
@@ -783,7 +818,7 @@ def _parse_time_token_to_seconds(text: str) -> Optional[float]:
 
     # Match: <TIME 00:00:55.0 video 1>
     m = re.search(
-        r"<TIME\s+(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)\s+video\s+\d+>",
+        r"<TIME\s+(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)(?:\s+video\s+\d+)?>",
         text,
         flags=re.I,
     )
@@ -1144,11 +1179,18 @@ def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
                     )
                 continue
 
+        if _use_full_video_context():
+            key = ("full", video_path)
+            if key not in seen:
+                seen.add(key)
+                _preprocess_video(video_path)
+            continue
+
         key = ("prefix", video_path, query_time)
         if key in seen:
             continue
         seen.add(key)
-        _extract_prefix_video(video_path, query_time)
+        _extract_prefix_video(video_path, query_time + 1)
 
 
 def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
@@ -1201,6 +1243,17 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
         raise ValueError(f"Missing video_path for doc id={doc.get('id')}")
 
     query_time_sec = float(doc.get("query_time_sec", 0.0))
+
+    if _use_full_video_context():
+        full_path = _preprocess_video(video_path)
+        doc["video_context"] = "full"
+        doc["stream3d_query_time_sec"] = query_time_sec
+        eval_logger.info(
+            f"OOS_VIDEO_CONTEXT={OOS_VIDEO_CONTEXT}; using full video for doc id={doc.get('id')}: {full_path}"
+        )
+        return [full_path]
+
+    doc["video_context"] = "prefix"
 
     if _is_step1_query_frame_debug(doc):
         frame_path = _extract_query_frame_image(video_path, query_time_sec + 1.0)
@@ -1370,6 +1423,11 @@ def _parse_time_and_point_prediction(prediction: str) -> Dict[str, Optional[floa
                 time_value = float(match.group(1))
                 break
 
+    if time_value is None and _step23_time_only_eval():
+        floats = _extract_all_floats(lowered)
+        if len(floats) == 1:
+            time_value = floats[0]
+
     point_patterns = [
         r"point\s*[:=]\s*\(?\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)?",
         r"(?:coord(?:inate)?s?|location|position|pixel|xy|x,y)\s*[:=]\s*\(?\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)?",
@@ -1522,6 +1580,7 @@ def _parse_time_and_point_prediction(prediction: str) -> Dict[str, Optional[floa
 def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optional[Dict[str, Any]]:
     meta = doc.get("answer_metadata") or {}
     qclass = str(doc.get("step_question_class", "")).strip().lower()
+    time_only = _step23_time_only_eval()
 
     if qclass == "oos_step2_last_visible":
         default_time = meta.get("sampled_last_visible_time_sec")
@@ -1538,25 +1597,27 @@ def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optiona
     for item in acceptable_meta:
         t = item.get("time_sec")
         xy = item.get("normalized_projected_pixel")
-        if isinstance(t, (int, float)) and isinstance(xy, list) and len(xy) >= 2:
+        if isinstance(t, (int, float)) and (time_only or (isinstance(xy, list) and len(xy) >= 2)):
             gold_candidates.append(
                 {
                     "time_sec": float(t),
-                    "x": float(xy[0]),
-                    "y": float(xy[1]),
+                    "x": None if time_only or not isinstance(xy, list) or len(xy) < 2 else float(xy[0]),
+                    "y": None if time_only or not isinstance(xy, list) or len(xy) < 2 else float(xy[1]),
                     "source": item.get("reference_source"),
                 }
             )
 
     # Backward-compatible fallback.
     if not gold_candidates:
-        if not isinstance(default_time, (int, float)) or not isinstance(default_point, list) or len(default_point) < 2:
+        if not isinstance(default_time, (int, float)):
+            return None
+        if not time_only and (not isinstance(default_point, list) or len(default_point) < 2):
             return None
         gold_candidates.append(
             {
                 "time_sec": float(default_time),
-                "x": float(default_point[0]),
-                "y": float(default_point[1]),
+                "x": None if time_only else float(default_point[0]),
+                "y": None if time_only else float(default_point[1]),
                 "source": "default_single_gold",
             }
         )
@@ -1568,21 +1629,28 @@ def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optiona
 
     best = None
     for gold in gold_candidates:
-        if not all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y]):
+        if not isinstance(pred_time, (int, float)):
             time_ok = False
-            coord_ok = False
+            coord_ok = False if not time_only else True
             time_err = None
             coord_err = None
         else:
             time_err = abs(float(pred_time) - float(gold["time_sec"]))
-            coord_err = max(
-                abs(float(pred_x) - float(gold["x"])),
-                abs(float(pred_y) - float(gold["y"])),
-            )
             time_ok = time_err <= OOS_TIME_TOLERANCE_SEC
-            coord_ok = coord_err <= OOS_COORD_TOLERANCE_NORM
+            if time_only:
+                coord_ok = True
+                coord_err = None
+            elif not all(isinstance(v, (int, float)) for v in [pred_x, pred_y, gold["x"], gold["y"]]):
+                coord_ok = False
+                coord_err = None
+            else:
+                coord_err = max(
+                    abs(float(pred_x) - float(gold["x"])),
+                    abs(float(pred_y) - float(gold["y"])),
+                )
+                coord_ok = coord_err <= OOS_COORD_TOLERANCE_NORM
 
-        candidate_score = float(time_ok and coord_ok)
+        candidate_score = float(time_ok if time_only else (time_ok and coord_ok))
 
         row = {
             **gold,
@@ -1613,25 +1681,26 @@ def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optiona
 
     correct = float(best["accuracy"]) if best is not None else 0.0
 
+    def _format_gold_candidate(g: Dict[str, Any]) -> str:
+        token = _seconds_to_time_token(float(g["time_sec"]), video_idx=1)
+        if time_only or not all(isinstance(g.get(k), (int, float)) for k in ["x", "y"]):
+            return token
+        return (
+            f"{token}; "
+            f"Point=({_format_float(float(g['x']), 4)}, {_format_float(float(g['y']), 4)})"
+        )
+
     enriched = dict(doc)
     enriched["prediction"] = prediction
     enriched["clean_prediction"] = _clean_prediction(prediction)
     enriched["pred_idx"] = None
     enriched["pred_choice"] = None
     enriched["gold_idx"] = None
-    enriched["gold_choice"] = (
-        f"{_seconds_to_time_token(float(gold_candidates[0]['time_sec']), video_idx=1)}; "
-        f"Point=({_format_float(float(gold_candidates[0]['x']), 4)}, "
-        f"{_format_float(float(gold_candidates[0]['y']), 4)})"
-    )
+    enriched["gold_choice"] = _format_gold_candidate(gold_candidates[0])
     enriched["gold_idxs"] = []
-    enriched["gold_choices"] = [
-        f"{_seconds_to_time_token(float(g['time_sec']), video_idx=1)}; "
-        f"Point=({_format_float(float(g['x']), 4)}, {_format_float(float(g['y']), 4)})"
-        for g in gold_candidates
-    ]
+    enriched["gold_choices"] = [_format_gold_candidate(g) for g in gold_candidates]
     enriched["accuracy"] = correct
-    enriched["parsed"] = all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y])
+    enriched["parsed"] = isinstance(pred_time, (int, float)) if time_only else all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y])
     enriched["scorable"] = True
     enriched["pred_time_sec"] = pred_time
     enriched["pred_point_x"] = pred_x
@@ -1643,8 +1712,8 @@ def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optiona
     enriched["matched_gold_source"] = None if best is None else best["source"]
 
     enriched["gold_time_sec"] = float(gold_candidates[0]["time_sec"])
-    enriched["gold_point_x"] = float(gold_candidates[0]["x"])
-    enriched["gold_point_y"] = float(gold_candidates[0]["y"])
+    enriched["gold_point_x"] = None if gold_candidates[0]["x"] is None else float(gold_candidates[0]["x"])
+    enriched["gold_point_y"] = None if gold_candidates[0]["y"] is None else float(gold_candidates[0]["y"])
     enriched["all_gold_time_point_candidates"] = gold_candidates
 
     enriched["time_tolerance_sec"] = OOS_TIME_TOLERANCE_SEC

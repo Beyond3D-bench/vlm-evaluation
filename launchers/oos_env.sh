@@ -65,3 +65,6 @@ export FFMPEG_PATH="${FFMPEG_PATH:-/work/courses/3dv/team1/ffmpeg_env/bin/ffmpeg
 export LD_LIBRARY_PATH="/work/courses/3dv/team1/ffmpeg_env/lib:${LD_LIBRARY_PATH:-}"
 export PATH="/work/courses/3dv/team1/ffmpeg_env/bin:${PATH}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+
+# export OOS_STEP23_EVAL_MODE=time_only
