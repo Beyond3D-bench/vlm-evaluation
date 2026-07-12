@@ -9,7 +9,7 @@ fi
 LAUNCHER_DIR="${LAUNCHER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$LAUNCHER_DIR/.." && pwd)}"
 
-OOS_MODEL_PRESETS="qwen3_6 qwen3_vl llava internvl phi4 vlm3r stream3d_vlm custom"
+OOS_MODEL_PRESETS="qwen3_6 qwen3_vl llava internvl phi4 vlm3r stream3d_vlm cambrian_p custom"
 
 load_oos_env() {
   local env_file="${OOS_ENV_FILE:-launchers/oos_env.sh}"
@@ -84,11 +84,67 @@ load_oos_model_preset() {
   source "$preset_file"
 }
 
+stage_hf_model_to_node_tmp() {
+  if [ "${OOS_STAGE_MODEL_TO_TMP:-0}" != "1" ]; then
+    return
+  fi
+
+  local model_id="${OOS_STAGE_MODEL_ID:-}"
+  if [ -z "$model_id" ]; then
+    echo "OOS_STAGE_MODEL_TO_TMP=1 requires OOS_STAGE_MODEL_ID." >&2
+    exit 1
+  fi
+
+  local cache_name="models--${model_id//\//--}"
+  local cache_dir="$HF_HOME/$cache_name"
+  local ref="${OOS_STAGE_MODEL_REF:-main}"
+  local snapshot_id=""
+  if [ -f "$cache_dir/refs/$ref" ]; then
+    snapshot_id="$(cat "$cache_dir/refs/$ref")"
+  elif [ -d "$cache_dir/snapshots/$ref" ]; then
+    snapshot_id="$ref"
+  fi
+
+  if [ -z "$snapshot_id" ] || [ ! -d "$cache_dir/snapshots/$snapshot_id" ]; then
+    echo "Missing cached HF snapshot for $model_id under $cache_dir." >&2
+    echo "Expected $cache_dir/refs/$ref or $cache_dir/snapshots/<revision>." >&2
+    exit 1
+  fi
+
+  local src="$cache_dir/snapshots/$snapshot_id"
+  local node_tmp_root="${OOS_NODE_TMPDIR:-/tmp/$USER/oos_hf_models/${SLURM_JOB_ID:-manual}}"
+  local dst="$node_tmp_root/$cache_name/$snapshot_id"
+  mkdir -p "$dst"
+
+  if [ ! -f "$dst/.oos_stage_complete" ]; then
+    echo "Staging $model_id snapshot $snapshot_id to node-local path: $dst"
+    rm -f "$dst/.oos_stage_complete"
+    cp -aL "$src"/. "$dst"/
+    touch "$dst/.oos_stage_complete"
+    echo "Finished staging $model_id at $(date -Is)"
+  else
+    echo "Using already staged model snapshot: $dst"
+  fi
+
+  MODEL_ARGS="${MODEL_ARGS/pretrained=$model_id/pretrained=$dst}"
+  export OOS_STAGED_MODEL_PATH="$dst"
+}
+
 print_oos_run_summary() {
   echo "Repo: $REPO_DIR"
   echo "Model preset: $MODEL_PRESET"
   echo "lmms-eval model: $MODEL"
+  echo "Model args: $MODEL_ARGS"
   echo "Task: ${TASK_NAME:-oos_videoqa}"
   echo "Output: $OUTPUT_PATH"
+  echo "Env file: ${OOS_ENV_FILE:-launchers/oos_env.sh}"
+  echo "Repo .env present: $([ -f "$REPO_DIR/.env" ] && echo yes || echo no)"
+  echo "HF_TOKEN set: $([ -n "${HF_TOKEN:-}" ] && echo yes || echo no)"
+  echo "HF_HOME: $HF_HOME"
+  echo "HF_DATASETS_CACHE: $HF_DATASETS_CACHE"
+  echo "LMMS_EVAL_CACHE: $LMMS_EVAL_CACHE"
+  echo "TMPDIR: $TMPDIR"
+  echo "OOS_STAGED_MODEL_PATH: ${OOS_STAGED_MODEL_PATH:-unset}"
+  echo "FFMPEG_PATH: ${FFMPEG_PATH:-unset}"
   python --version
 }

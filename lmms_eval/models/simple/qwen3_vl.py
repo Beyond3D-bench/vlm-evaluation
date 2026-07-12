@@ -20,13 +20,13 @@ if not _has_qwen_vl:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
 
 
-def _resolve_model_class(pretrained: str, is_moe: bool):
+def _resolve_model_class(pretrained: str, is_moe: bool, local_files_only: bool = False):
     """Auto-detect and return the appropriate HF model class for a Qwen3 variant.
 
     Returns (model_class, dtype_kwarg_name) where dtype_kwarg_name is the
     keyword argument name for specifying dtype in from_pretrained().
     """
-    config = AutoConfig.from_pretrained(pretrained, trust_remote_code=True)
+    config = AutoConfig.from_pretrained(pretrained, trust_remote_code=True, local_files_only=local_files_only)
     model_type = getattr(config, "model_type", "")
 
     if "qwen3_5" in model_type:
@@ -85,6 +85,7 @@ class Qwen3_VL(lmms):
         interleave_visuals: Optional[bool] = False,
         enable_thinking: Optional[bool] = None,
         reasoning_prompt: Optional[str] = None,
+        local_files_only: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -105,7 +106,7 @@ class Qwen3_VL(lmms):
 
         # Auto-detect model variant and load the appropriate HF class
         is_moe = bool(re.search(r"A\d+B", pretrained))
-        model_cls, dtype_key = _resolve_model_class(pretrained, is_moe)
+        model_cls, dtype_key = _resolve_model_class(pretrained, is_moe, local_files_only=local_files_only)
 
         model_kwargs = {
             dtype_key: "bfloat16",
@@ -114,7 +115,7 @@ class Qwen3_VL(lmms):
         if attn_implementation is not None:
             model_kwargs["attn_implementation"] = attn_implementation
 
-        self._model = model_cls.from_pretrained(pretrained, **model_kwargs).eval()
+        self._model = model_cls.from_pretrained(pretrained, local_files_only=local_files_only, **model_kwargs).eval()
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
         self.total_pixels = total_pixels
@@ -127,8 +128,8 @@ class Qwen3_VL(lmms):
         else:
             self.reasoning_prompt = None
 
-        self.processor = AutoProcessor.from_pretrained(pretrained, max_pixels=max_pixels, min_pixels=min_pixels)
-        self._tokenizer = AutoTokenizer.from_pretrained(pretrained)
+        self.processor = AutoProcessor.from_pretrained(pretrained, max_pixels=max_pixels, min_pixels=min_pixels, local_files_only=local_files_only)
+        self._tokenizer = AutoTokenizer.from_pretrained(pretrained, local_files_only=local_files_only)
         self.system_prompt = system_prompt
         self.interleave_visuals = interleave_visuals
 

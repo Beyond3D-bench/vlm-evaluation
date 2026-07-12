@@ -54,6 +54,9 @@ def _step_sort_key(step: Any):
 
 
 def _is_time_point_open_task(doc: Dict[str, Any]) -> bool:
+    if _is_multiple_choice(doc):
+        return False
+
     cls = str(doc.get("step_question_class", "")).strip().lower()
     return cls in {
         "oos_step2_last_visible",

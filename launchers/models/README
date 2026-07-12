@@ -1,0 +1,26 @@
+# Models We Want to Implement / Evaluate
+
+### Backbone / Traditional Models
+
+- [x] LLaVA
+- [x] Qwen
+- [x] InternVL
+- [x] Phi-4-multimodal
+
+### Spatial / 3D-Aware Models
+
+- [x] VLM3R 2025, CVPR 2026
+- [x] Cambrian-P 21 May 2026
+- [ ] Spatial-MLLM 2025
+- [ ] SenseNova-SI 2025
+- [ ] VG-LLM 2025
+- [ ] VilaSR 2025
+- [ ] SpaceMind++ 2025
+
+### (Not Really relevant in our case) Streaming / Online Models
+
+- [ ] Flash-VStream 2025
+- [ ] Dispider 2025 
+- [ ] VideoChat-Online 2025 https://arxiv.org/abs/2501.00584
+
+*P.S. This list is not exhaustive, so feel free to add more models.*

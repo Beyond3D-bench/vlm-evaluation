@@ -471,7 +471,8 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
     eval_logger.remove()
     # Configure logger with detailed format including file path, function name, and line number
     log_format = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | " "<level>{level: <8}</level> | " "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - " "<level>{message}</level>"
-    eval_logger.add(sys.stdout, colorize=True, level=args.verbosity, format=log_format)
+    log_colorize = os.getenv("LMMS_EVAL_LOG_COLOR", "0") == "1"
+    eval_logger.add(sys.stdout, colorize=log_colorize, level=args.verbosity, format=log_format)
     eval_logger.info(f"Verbosity set to {args.verbosity}")
     os.environ["VERBOSITY"] = args.verbosity
 
@@ -591,7 +592,10 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
         args.hf_hub_log_args += f",token={os.environ.get('HF_TOKEN')}"
 
     evaluation_tracker_args = simple_parse_args_string(args.hf_hub_log_args)
-    eval_logger.info(f"Evaluation tracker args: {evaluation_tracker_args}")
+    logged_tracker_args = dict(evaluation_tracker_args)
+    if logged_tracker_args.get("token"):
+        logged_tracker_args["token"] = "***REDACTED***"
+    eval_logger.info(f"Evaluation tracker args: {logged_tracker_args}")
 
     evaluation_tracker = EvaluationTracker(**evaluation_tracker_args)
 

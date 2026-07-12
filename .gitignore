@@ -84,3 +84,6 @@ CLAUDE.md
 .opencode
 .ignored/
 .worktrees/
+
+.venv
+.venv-*
