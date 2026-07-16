@@ -1362,7 +1362,7 @@ def oos_doc_to_messages_with_visuals(doc: Dict[str, Any], lmms_eval_specific_kwa
 
     This keeps the same system/history/current-question structure as
     oos_doc_to_messages, but also injects oos_doc_to_visual outputs into the
-    first user turn. That mirrors the qwen3_vl_chat_fixed wrapper behavior while
+    current user turn. That mirrors the qwen3_vl_chat_fixed wrapper behavior while
     keeping the original doc_to_messages function unchanged.
     """
     messages = oos_doc_to_messages(doc, lmms_eval_specific_kwargs)
@@ -1371,7 +1371,7 @@ def oos_doc_to_messages_with_visuals(doc: Dict[str, Any], lmms_eval_specific_kwa
     if not visual_content:
         return messages
 
-    for msg in messages:
+    for msg in reversed(messages):
         if msg.get("role") != "user":
             continue
         msg["content"] = visual_content + list(msg.get("content") or [])

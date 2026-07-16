@@ -310,28 +310,30 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
                 system_msgs = [m for m in messages if m.get("role") == "system"]
                 non_system_msgs = [m for m in messages if m.get("role") != "system"]
 
-                first_user_idx = None
-                for i, msg in enumerate(non_system_msgs):
+                current_user_idx = None
+                for i in range(len(non_system_msgs) - 1, -1, -1):
+                    msg = non_system_msgs[i]
                     if msg.get("role") == "user":
-                        first_user_idx = i
+                        current_user_idx = i
                         break
 
-                if first_user_idx is None:
+                if current_user_idx is None:
                     non_system_msgs = [{
                         "role": "user",
                         "content": visual_content + [{"type": "text", "text": ctx}],
                     }]
+                    current_user_idx = 0
                 else:
-                    non_system_msgs[first_user_idx]["content"] = (
-                        visual_content + non_system_msgs[first_user_idx]["content"]
+                    non_system_msgs[current_user_idx]["content"] = (
+                        visual_content + non_system_msgs[current_user_idx]["content"]
                     )
 
                 messages = system_msgs + non_system_msgs
 
-                self._dbg("[VIDEO ATTACH] attached video to first user text turn")
+                self._dbg("[VIDEO ATTACH] attached video to current user text turn")
                 self._dbg(
-                    f"[VIDEO ATTACH] first_user_types="
-                    f"{[c.get('type') for c in non_system_msgs[first_user_idx]['content']]}"
+                    f"[VIDEO ATTACH] current_user_types="
+                    f"{[c.get('type') for c in non_system_msgs[current_user_idx]['content']]}"
                 )
             elif not has_embedded_media:
                 self._dbg("[WARNING] visual_content is empty; no video/image attached for this step.")

@@ -4,14 +4,20 @@ import warnings
 from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
+import torchvision.transforms as T
 from accelerate import Accelerator, DistributedType
 from accelerate.state import AcceleratorState
 from accelerate.utils import InitProcessGroupKwargs
 from loguru import logger as eval_logger
+from PIL import Image
+from torchvision.transforms.functional import InterpolationMode
 from tqdm import tqdm
 from transformers import (
+    AutoModel,
     AutoProcessor,
+    AutoTokenizer,
     InternVLForConditionalGeneration,
 )
 
@@ -23,6 +29,74 @@ from lmms_eval.models.model_utils.gen_metrics import log_metrics
 from lmms_eval.protocol import ChatMessages
 
 warnings.filterwarnings("ignore")
+
+try:
+    from decord import VideoReader, cpu
+except ImportError:
+    VideoReader = None
+    cpu = None
+
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def _build_transform(input_size: int) -> T.Compose:
+    return T.Compose(
+        [
+            T.Lambda(lambda img: img.convert("RGB") if img.mode != "RGB" else img),
+            T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
+
+
+def _find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
+    best_ratio_diff = float("inf")
+    best_ratio = (1, 1)
+    area = width * height
+    for ratio in target_ratios:
+        target_aspect_ratio = ratio[0] / ratio[1]
+        ratio_diff = abs(aspect_ratio - target_aspect_ratio)
+        if ratio_diff < best_ratio_diff:
+            best_ratio_diff = ratio_diff
+            best_ratio = ratio
+        elif ratio_diff == best_ratio_diff:
+            if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
+                best_ratio = ratio
+    return best_ratio
+
+
+def _dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
+    orig_width, orig_height = image.size
+    aspect_ratio = orig_width / orig_height
+    target_ratios = set(
+        (i, j)
+        for n in range(min_num, max_num + 1)
+        for i in range(1, n + 1)
+        for j in range(1, n + 1)
+        if min_num <= i * j <= max_num
+    )
+    target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
+    target_width_ratio, target_height_ratio = _find_closest_aspect_ratio(
+        aspect_ratio, target_ratios, orig_width, orig_height, image_size
+    )
+    target_width = image_size * target_width_ratio
+    target_height = image_size * target_height_ratio
+    blocks = target_width_ratio * target_height_ratio
+    resized_img = image.resize((target_width, target_height))
+    processed_images = []
+    for i in range(blocks):
+        box = (
+            (i % (target_width // image_size)) * image_size,
+            (i // (target_width // image_size)) * image_size,
+            ((i % (target_width // image_size)) + 1) * image_size,
+            ((i // (target_width // image_size)) + 1) * image_size,
+        )
+        processed_images.append(resized_img.crop(box))
+    if use_thumbnail and len(processed_images) != 1:
+        processed_images.append(image.resize((image_size, image_size)))
+    return processed_images
 
 
 @register_model("internvl_hf_chat")
@@ -124,6 +198,7 @@ class InternVLHf(lmms):
         self.do_resize_video = self._as_bool(do_resize_video)
         self.video_width = int(video_width)
         self.video_height = int(video_height)
+        self.use_remote_chat = self._as_bool(trust_remote_code)
 
         batch_size_int = int(batch_size)
         assert batch_size_int == 1, f"Batch size should be 1 for InternVLHf, but got {batch_size_int}."
@@ -142,7 +217,7 @@ class InternVLHf(lmms):
 
         model_kwargs = {
             "revision": revision,
-            "torch_dtype": torch.bfloat16,
+            "dtype": torch.bfloat16,
             "low_cpu_mem_usage": low_cpu_mem_usage,
             "attn_implementation": attn_implementation,
             "trust_remote_code": trust_remote_code,
@@ -158,7 +233,7 @@ class InternVLHf(lmms):
         if load_in_4bit or load_in_8bit:
             from transformers import BitsAndBytesConfig
 
-            model_kwargs.pop("torch_dtype", None)
+            model_kwargs.pop("dtype", None)
             if load_in_4bit:
                 compute_dtype = getattr(torch, str(bnb_4bit_compute_dtype), None)
                 if compute_dtype is None:
@@ -173,18 +248,28 @@ class InternVLHf(lmms):
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
         self._dbg(f"[MODEL LOAD KWARGS] {model_kwargs}")
-        self._model = InternVLForConditionalGeneration.from_pretrained(
+        model_cls = AutoModel if self._as_bool(trust_remote_code) else InternVLForConditionalGeneration
+        self._model = model_cls.from_pretrained(
             self.path,
             **model_kwargs,
         ).eval()
         self._config = self._model.config
 
-        self.processor = AutoProcessor.from_pretrained(
-            self.path,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-        )
-        self._tokenizer = self.processor.tokenizer
+        if self.use_remote_chat:
+            self.processor = None
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.path,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+                use_fast=False,
+            )
+        else:
+            self.processor = AutoProcessor.from_pretrained(
+                self.path,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+            )
+            self._tokenizer = getattr(self.processor, "tokenizer", self.processor)
         self.use_cache = use_cache
 
         if accelerator.num_processes > 1:
@@ -275,6 +360,200 @@ class InternVLHf(lmms):
                 new_list.append(j)
         return new_list
 
+    def _text_from_content(self, content: List[Dict]) -> str:
+        return "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text" and str(part.get("text", "")).strip()
+        ).strip()
+
+    def _remote_chat_parts(self, messages: ChatMessages) -> Tuple[str, List[Tuple[str, str]], str, List[str]]:
+        system_parts: List[str] = []
+        history: List[Tuple[str, str]] = []
+        pending_user: Optional[str] = None
+        current_text = ""
+        video_paths: List[str] = []
+
+        dumped = messages.model_dump()["messages"]
+        for msg in dumped:
+            role = msg.get("role")
+            content = msg.get("content", [])
+            text = self._text_from_content(content)
+            if role == "system":
+                if text:
+                    system_parts.append(text)
+                continue
+            if role == "user":
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "video":
+                        video_paths.append(item.get("url") or item.get("video"))
+                if pending_user is not None:
+                    history.append((pending_user, ""))
+                pending_user = text
+                current_text = text
+            elif role == "assistant":
+                if pending_user is not None:
+                    history.append((pending_user, text))
+                    pending_user = None
+
+        if pending_user is None and history:
+            current_text = history[-1][0]
+            history = history[:-1]
+        elif pending_user is not None:
+            current_text = pending_user
+
+        return "\n\n".join(system_parts).strip(), history, current_text, [v for v in video_paths if v]
+
+    def _sample_frame_indices(self, video_path: str, vr: VideoReader) -> np.ndarray:
+        total_frames = len(vr)
+        if total_frames <= 0:
+            raise ValueError(f"Video has no frames: {video_path}")
+        video_fps = float(vr.get_avg_fps())
+        if self.fps is not None and self.fps > 0:
+            duration = total_frames / max(video_fps, 1e-6)
+            num_segments = max(1, int(round(duration * float(self.fps))))
+            if self.num_frames is not None:
+                num_segments = min(num_segments, int(self.num_frames))
+        else:
+            num_segments = int(self.num_frames)
+        num_segments = max(1, min(num_segments, total_frames))
+        return np.linspace(0, total_frames - 1, num_segments, dtype=int)
+
+    def _load_remote_video(self, video_path: str) -> Tuple[torch.Tensor, List[int]]:
+        if VideoReader is None or cpu is None:
+            raise ImportError("SenseNova InternVL video input requires decord. Install it in the active environment.")
+        vr = VideoReader(video_path, ctx=cpu(0), num_threads=1)
+        frame_indices = self._sample_frame_indices(video_path, vr)
+        max_num = max(
+            1,
+            min(
+                self.max_patches,
+                int(os.getenv("OOS_INTERNVL_VIDEO_MAX_PATCHES_PER_FRAME", "1")),
+            ),
+        )
+        transform = _build_transform(self.video_height)
+        pixel_values_list = []
+        num_patches_list = []
+        for frame_index in frame_indices:
+            img = Image.fromarray(vr[int(frame_index)].asnumpy()).convert("RGB")
+            tiles = _dynamic_preprocess(
+                img,
+                min_num=self.min_patches,
+                max_num=max_num,
+                image_size=self.video_height,
+                use_thumbnail=True,
+            )
+            pixel_values = torch.stack([transform(tile) for tile in tiles])
+            pixel_values_list.append(pixel_values)
+            num_patches_list.append(pixel_values.shape[0])
+        return torch.cat(pixel_values_list), num_patches_list
+
+    def _remote_generation_kwargs(self, gen_kwargs: Dict) -> Dict:
+        current = dict(gen_kwargs)
+        current.pop("until", None)
+        current.pop("image_sizes", None)
+        current["max_new_tokens"] = int(current.get("max_new_tokens", 1024))
+        current["num_beams"] = int(current.get("num_beams", 1))
+        temperature = float(current.get("temperature", 0) or 0)
+        current["do_sample"] = temperature > 0
+        if current["do_sample"]:
+            current["temperature"] = temperature
+            if current.get("top_p") is not None:
+                current["top_p"] = float(current["top_p"])
+        else:
+            current.pop("temperature", None)
+            current.pop("top_p", None)
+            current.pop("top_k", None)
+        return current
+
+    def _generate_until_remote_chat(self, requests: List[Instance]) -> List[GenerationResult]:
+        res: List[GenerationResult] = []
+
+        def _collate(x):
+            return x[2], x[2]
+
+        re_ords = utils.Collator([reg.args for reg in requests], _collate, group_fn=lambda x: x[2], grouping=True)
+        chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
+        num_iters = len(requests) // self.batch_size if len(requests) % self.batch_size == 0 else len(requests) // self.batch_size + 1
+        pbar = tqdm(total=num_iters, disable=(self.rank != 0), desc="Model Responding")
+        total_elapsed_time = 0.0
+        total_tokens = 0
+
+        for chunk in chunks:
+            ctx, doc_to_messages, all_gen_kwargs, doc_id, task, split = zip(*chunk)
+            task = task[0]
+            split = split[0]
+            doc = self.task_dict[task][split][doc_id[0]]
+            chat_messages = ChatMessages(**{"messages": doc_to_messages[0](doc)})
+
+            system_text, history, current_text, video_paths = self._remote_chat_parts(chat_messages)
+            if system_text:
+                self.model.system_message = system_text
+
+            if not video_paths:
+                pixel_values = None
+                num_patches_list = []
+                question = current_text or ctx[0]
+            else:
+                if len(video_paths) != 1:
+                    raise ValueError(f"SenseNova InternVL remote chat supports one video, got {len(video_paths)}")
+                pixel_values, num_patches_list = self._load_remote_video(video_paths[0])
+                pixel_values = pixel_values.to(torch.bfloat16).to(self.device)
+                video_prefix = "".join([f"Frame{i + 1}: <image>\n" for i in range(len(num_patches_list))])
+                question = video_prefix + (current_text or ctx[0])
+
+            self._dbg("\n" + "=" * 100)
+            self._dbg(
+                f"[STEP] task={task} split={split} doc_id={doc_id[0]} "
+                f"step={doc.get('step')} id={doc.get('id')} mode={doc.get('mode')}"
+            )
+            self._dbg(f"[SYSTEM] {system_text}")
+            self._dbg(f"[HISTORY PAIRS] {len(history)}")
+            self._dbg(f"[VIDEO PATHS] {video_paths}")
+            self._dbg(f"[CURRENT USER TYPES] {['video'] * len(video_paths) + ['text']}")
+            self._dbg(f"[QUESTION] {current_text}")
+            self._dbg(f"[VIDEO FRAMES] {len(num_patches_list)}")
+
+            gen_kwargs = self._remote_generation_kwargs(all_gen_kwargs[0])
+            self._dbg(f"[GEN KWARGS] {gen_kwargs}")
+            start_time = time.time()
+            answer = self.model.chat(
+                self.tokenizer,
+                pixel_values,
+                question,
+                gen_kwargs,
+                num_patches_list=num_patches_list,
+                history=history,
+                return_history=False,
+            )
+            end_time = time.time()
+
+            total_elapsed_time += end_time - start_time
+            token_counts = None
+            if isinstance(answer, str):
+                output_tokens = len(self.tokenizer.encode(answer, add_special_tokens=False))
+                total_tokens += output_tokens
+                token_counts = TokenCounts(output_tokens=output_tokens)
+
+            print("\n" + "=" * 80)
+            print("[RAW OUTPUT]")
+            print(answer)
+            print("\n[CLEANED OUTPUT]")
+            print(answer)
+
+            res.append(GenerationResult(text=answer, token_counts=token_counts))
+            self.cache_hook.add_partial("generate_until", (question, gen_kwargs), answer)
+            pbar.update(1)
+
+        pbar.close()
+        log_metrics(
+            total_gen_tokens=total_tokens,
+            total_elapsed_time=total_elapsed_time,
+            avg_speed=total_tokens / total_elapsed_time if total_elapsed_time > 0 else 0,
+            additional_metrics={"rank": self.rank},
+        )
+        return re_ords.get_original(res)
+
     def generate_until(self, requests: List[Instance]) -> List[GenerationResult]:
         """Generate responses for a list of requests.
 
@@ -284,6 +563,9 @@ class InternVLHf(lmms):
         Returns:
             List of generated response strings.
         """
+        if self.use_remote_chat:
+            return self._generate_until_remote_chat(requests)
+
         res: List[GenerationResult] = []
 
         # A dummy collate here to sort by doc id
@@ -447,6 +729,11 @@ class InternVLHf(lmms):
                 self._dbg("\n" + "=" * 80)
                 self._dbg("[RAW OUTPUT]")
                 self._dbg(str(answer))
+                print("\n" + "=" * 80)
+                print("[RAW OUTPUT]")
+                print(answer)
+                print("\n[CLEANED OUTPUT]")
+                print(answer)
                 token_counts = TokenCounts(output_tokens=len(generated_ids_trimmed[i])) if generated_ids_trimmed is not None else None
                 res.append(GenerationResult(text=answer, token_counts=token_counts))
                 self.cache_hook.add_partial("generate_until", (text, gen_kwargs), answer)
@@ -473,5 +760,4 @@ class InternVLHf(lmms):
         raise NotImplementedError("Loglikelihood is not implemented for InternVLHf.")
 
     def generate_until_multi_round(self, requests) -> List[str]:
-        """Generate multi-round responses. Not implemented for InternVLHf."""
-        raise NotImplementedError("Multi-round generation is not implemented for InternVLHf.")
+        return self.generate_until(requests)

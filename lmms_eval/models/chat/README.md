@@ -63,6 +63,7 @@ key in that mapping, not necessarily the internal `@register_model(...)` name.
 | `qwen3_vl_chat_fixed` | `qwen3_vl_chat_fixed.py` | `Qwen3_VL_Chat_Fixed` | Qwen3-VL chat wrapper with OOS/multi-turn media-history fixes. |
 | `qwen3_5` | `qwen3_5.py` | `Qwen3_5` | Qwen3.5 variant that combines Qwen3.5 defaults with the fixed Qwen3-VL chat path. |
 | `sglang` | `sglang.py` | `Sglang` | SGLang runtime backend. The class is registered internally as `sglang_runtime`. |
+| `spatial_mllm` | `spatial_mllm.py` | `SpatialMLLM` | Spatial-MLLM wrapper for Diankun/Spatial-MLLM-v1.1-Instruct checkpoints, preserving the chat text/image/video input contract. |
 | `stream3d_vlm` | `stream3d_vlm.py` | `Stream3DVLM` | Stream3D-VLM wrapper with OOS history and stream-frame prompt controls. |
 | `thyme` | `thyme.py` | `Thyme` | Qwen2.5-VL-based reasoning wrapper with iterative code execution for image tasks. |
 | `vllm` | `vllm.py` | `VLLM` | VLLM `chat()` backend that sends OpenAI-style multimodal messages. |
@@ -109,6 +110,38 @@ For Cambrian-P:
 python -m lmms_eval \
   --model cambrian_p \
   --model_args pretrained=nyu-visionx/Cambrian-P-8B,conv_template=qwen_2,video_max_frames=32 \
+  --tasks <task_name> \
+  --batch_size 1
+```
+
+For Spatial-MLLM:
+
+```bash
+SPATIAL_MLLM_REPO=/path/to/Spatial-MLLM \
+python -m lmms_eval \
+  --model spatial_mllm \
+  --model_args pretrained=Diankun/Spatial-MLLM-v1.1-Instruct-820K,batch_size=1,fps=1 \
+  --tasks <task_name> \
+  --batch_size 1
+```
+
+For SenseNova-SI InternVL, use the existing InternVL HF chat backend:
+
+```bash
+python -m lmms_eval \
+  --model internvl_hf \
+  --model_args pretrained=sensenova/SenseNova-SI-1.5-InternVL3-8B,trust_remote_code=True,num_frames=250,do_sample_frames=True,do_resize_video=False,attn_implementation=sdpa \
+  --tasks <task_name> \
+  --batch_size 1
+```
+
+For the SenseNova-SI Qwen3-VL variant, use the existing fixed Qwen chat
+backend:
+
+```bash
+python -m lmms_eval \
+  --model qwen3_vl_chat_fixed \
+  --model_args pretrained=sensenova/SenseNova-SI-1.3-Qwen3-VL-8B,max_num_frames=250,min_pixels=200704,max_pixels=200704,attn_implementation=sdpa \
   --tasks <task_name> \
   --batch_size 1
 ```
@@ -218,6 +251,10 @@ history depending on the question class, and optionally track predicted history.
   not `1`.
 - `vlm_3r.py` loads VLM-3R/LLaVA-NeXT-Video components, samples video with
   decord or ffmpeg, and can export point clouds when enabled.
+- `spatial_mllm.py` uses the official Spatial-MLLM source package for
+  `SpatialMLLMForConditionalGeneration` and adds the extra `image_tchw` and
+  `video_tchw` tensors expected by that model. Set `SPATIAL_MLLM_REPO` or pass
+  `spatial_mllm_repo=/path/to/Spatial-MLLM` in `--model_args`.
 
 ## Adding a New Chat Backend
 

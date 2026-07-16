@@ -56,6 +56,8 @@ Examples:
 ```bash
 OOS_MODEL=qwen3_6 bash launchers/run_oos_eval.sh
 OOS_MODEL=internvl OOS_LIMIT=2 bash launchers/run_oos_eval.sh
+OOS_MODEL=sensenova_internvl OOS_LIMIT=2 bash launchers/run_oos_eval.sh  # SenseNova-SI-1.5-InternVL3-8B
+OOS_MODEL=sensenova_qwen OOS_LIMIT=2 bash launchers/run_oos_eval.sh     # SenseNova-SI-1.3-Qwen3-VL-8B
 OOS_MODEL=cambrian_p OOS_LIMIT=2 OOS_VENV=/cluster/home/fangma/scratch/venvs/oos_vlm_evaluation-cu124-cambrianp/bin/activate bash launchers/run_oos_eval.sh
 OOS_MODEL=qwen3_6 OOS_VENV=.venv/bin/activate sbatch launchers/slurm_oos_eval.sh
 ```

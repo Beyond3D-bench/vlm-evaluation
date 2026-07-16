@@ -9,7 +9,7 @@ fi
 LAUNCHER_DIR="${LAUNCHER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$LAUNCHER_DIR/.." && pwd)}"
 
-OOS_MODEL_PRESETS="qwen3_6 qwen3_vl llava internvl phi4 vlm3r stream3d_vlm cambrian_p custom"
+OOS_MODEL_PRESETS="qwen3_6 qwen3_vl llava internvl phi4 vlm3r stream3d_vlm cambrian_p spatial_mllm sensenova_internvl sensenova_qwen custom"
 
 load_oos_env() {
   local env_file="${OOS_ENV_FILE:-launchers/oos_env.sh}"
@@ -89,9 +89,37 @@ stage_hf_model_to_node_tmp() {
     return
   fi
 
+  local local_model_dir="${OOS_STAGE_MODEL_DIR:-}"
+  if [ -n "$local_model_dir" ]; then
+    if [ ! -d "$local_model_dir" ]; then
+      echo "OOS_STAGE_MODEL_DIR does not exist: $local_model_dir" >&2
+      exit 1
+    fi
+
+    local model_name
+    model_name="$(basename "$local_model_dir")"
+    local node_tmp_root="${OOS_NODE_TMPDIR:-$TMPDIR/oos_models/${SLURM_JOB_ID:-manual}}"
+    local dst="$node_tmp_root/$model_name"
+    mkdir -p "$dst"
+
+    if [ ! -f "$dst/.oos_stage_complete" ]; then
+      echo "Staging local model directory to node-local path: $dst"
+      rm -f "$dst/.oos_stage_complete"
+      cp -aL "$local_model_dir"/. "$dst"/
+      touch "$dst/.oos_stage_complete"
+      echo "Finished staging local model at $(date -Is)"
+    else
+      echo "Using already staged local model: $dst"
+    fi
+
+    MODEL_ARGS="${MODEL_ARGS/pretrained=$local_model_dir/pretrained=$dst}"
+    export OOS_STAGED_MODEL_PATH="$dst"
+    return
+  fi
+
   local model_id="${OOS_STAGE_MODEL_ID:-}"
   if [ -z "$model_id" ]; then
-    echo "OOS_STAGE_MODEL_TO_TMP=1 requires OOS_STAGE_MODEL_ID." >&2
+    echo "OOS_STAGE_MODEL_TO_TMP=1 requires OOS_STAGE_MODEL_ID or OOS_STAGE_MODEL_DIR." >&2
     exit 1
   fi
 

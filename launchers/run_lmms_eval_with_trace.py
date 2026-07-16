@@ -4,6 +4,7 @@ import faulthandler
 import os
 import runpy
 import sys
+from pathlib import Path
 
 
 def _stack_dump_interval() -> int:
@@ -24,6 +25,10 @@ print(
     f"Python wrapper: entering lmms_eval at {_datetime.datetime.now().isoformat(timespec='seconds')}",
     flush=True,
 )
+
+repo_dir = Path(__file__).resolve().parents[1]
+if str(repo_dir) not in sys.path:
+    sys.path.insert(0, str(repo_dir))
 
 sys.argv = ["lmms_eval"] + sys.argv[1:]
 runpy.run_module("lmms_eval", run_name="__main__", alter_sys=True)

@@ -34,6 +34,36 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export HF_ENABLE_PARALLEL_LOADING="${HF_ENABLE_PARALLEL_LOADING:-true}"
 export HF_PARALLEL_LOADING_WORKERS="${HF_PARALLEL_LOADING_WORKERS:-4}"
 
+if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
+  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
+  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-SpatialMLLM/activate_oos.sh}"
+  export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-/cluster/home/$USER/scratch/checkpoints/Spatial-MLLM-v1.1-Instruct-820K}"
+  export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-/cluster/home/$USER/scratch/Spatial-MLLM}"
+  export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
+  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SPATIAL_MLLM_CKPT}"
+  export DS_BUILD_OPS="${DS_BUILD_OPS:-0}"
+  export DS_BUILD_AIO="${DS_BUILD_AIO:-0}"
+  export DS_BUILD_FUSED_ADAM="${DS_BUILD_FUSED_ADAM:-0}"
+  export DS_IGNORE_CUDA_DETECTION="${DS_IGNORE_CUDA_DETECTION:-1}"
+  export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-decord}"
+  export OOS_SPATIAL_LOG_SAMPLES="${OOS_SPATIAL_LOG_SAMPLES:-1}"
+fi
+
+if [ "${OOS_MODEL:-}" = "sensenova_internvl" ] || [ "${OOS_MODEL:-}" = "sensenova_qwen" ]; then
+  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
+  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-SenseNovaSI/activate_oos.sh}"
+  export SENSENOVA_INTERNVL_CKPT="${SENSENOVA_INTERNVL_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.5-InternVL3-8B}"
+  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.3-Qwen3-VL-8B}"
+  export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-decord}"
+  export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
+  export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
+  if [ "${OOS_MODEL:-}" = "sensenova_internvl" ]; then
+    export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_INTERNVL_CKPT}"
+  else
+    export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_QWEN_CKPT}"
+  fi
+fi
+
 # OOS task behavior.
 export OOS_VENV="${OOS_VENV:-.venv-cu128-home/bin/activate}"
 export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-}"
