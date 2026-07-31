@@ -68,7 +68,7 @@ export VLM3R_CKPT="${VLM3R_CKPT:-Journey9ni/vlm-3r-llava-qwen2-lora}"
 export VLM3R_BASE="${VLM3R_BASE:-lmms-lab/LLaVA-NeXT-Video-7B-Qwen2}"
 
 # Current ETH 3dv GB10 settings used by the existing Qwen3.6 script.
-export TORCH_CUDNN_V8_API_DISABLED=1
+# export TORCH_CUDNN_V8_API_DISABLED=1 # This needs to be disabled on euler!!! Otherwise qwen3.5 will take around 680 times longer
 # export FFMPEG_PATH="${FFMPEG_PATH:-/work/courses/3dv/team1/ffmpeg_env/bin/ffmpeg}"
 # export LD_LIBRARY_PATH="/work/courses/3dv/team1/ffmpeg_env/lib:${LD_LIBRARY_PATH:-}"
 # export PATH="/work/courses/3dv/team1/ffmpeg_env/bin:${PATH}"
