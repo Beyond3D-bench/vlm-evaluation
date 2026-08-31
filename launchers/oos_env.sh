@@ -16,6 +16,7 @@ export OOS_CHECKPOINT_DIR="${OOS_CHECKPOINT_DIR:-$OOS_STORAGE_ROOT/checkpoints}"
 export OOS_OVERLAY_ROOT="${OOS_OVERLAY_ROOT:-$OOS_STORAGE_ROOT/python-overlays}"
 export OOS_VENV_ROOT="${OOS_VENV_ROOT:-$OOS_STORAGE_ROOT/venvs}"
 export OOS_DATA_ROOT="${OOS_DATA_ROOT:-$OOS_STORAGE_ROOT/data}"
+export OOS_MODEL_SOURCE_DIR="${OOS_MODEL_SOURCE_DIR:-$OOS_STORAGE_ROOT}"
 
 # Persistent Hugging Face cache. Downloads made on a login node remain
 # available to offline compute jobs through the standard Hub cache layout.
@@ -41,7 +42,7 @@ if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
   export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-$OOS_CHECKPOINT_DIR/Spatial-MLLM-v1.1-Instruct-820K}"
-  export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-$OOS_STORAGE_ROOT/Spatial-MLLM}"
+  export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-$OOS_MODEL_SOURCE_DIR/Spatial-MLLM}"
   export SPATIAL_MLLM_EXTERNAL_PATH="${SPATIAL_MLLM_EXTERNAL_PATH:-${SPATIAL_MLLM_REPO}/src/qwenvl/external}"
   export SPATIAL_OVERLAY="${SPATIAL_OVERLAY:-$OOS_OVERLAY_ROOT/spatial-mllm-cu128}"
 
@@ -98,7 +99,7 @@ if [ "${OOS_MODEL:-}" = "cambrian_p" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
   export CAMBRIAN_OVERLAY="${CAMBRIAN_OVERLAY:-$OOS_OVERLAY_ROOT/cambrian-cu128}"
-  export CAMBRIAN_P_PATH="${CAMBRIAN_P_PATH:-$OOS_STORAGE_ROOT/cambrian-p}"
+  export CAMBRIAN_P_PATH="${CAMBRIAN_P_PATH:-$OOS_MODEL_SOURCE_DIR/cambrian-p}"
   export CAMBRIAN_P_VGGT_PATH="${CAMBRIAN_P_VGGT_PATH:-${CAMBRIAN_P_PATH}/vggt}"
 
   # Prepend in reverse priority order so the final search order is
@@ -147,7 +148,7 @@ export OOS_COORD_TOLERANCE_NORM="${OOS_COORD_TOLERANCE_NORM:-0.2}"
 export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
 
 # VLM-3R local source, dependency overlay, LoRA adapter, and base model.
-export VLM3R_REPO="${VLM3R_REPO:-$OOS_STORAGE_ROOT/VLM-3R}"
+export VLM3R_REPO="${VLM3R_REPO:-$OOS_MODEL_SOURCE_DIR/VLM-3R}"
 export VLM3R_OVERLAY="${VLM3R_OVERLAY:-$OOS_OVERLAY_ROOT/vlm3r-cu128}"
 export VLM3R_CKPT="${VLM3R_CKPT:-$HF_HOME/vlm-3r-llava-qwen2-lora}"
 export VLM3R_BASE="${VLM3R_BASE:-$HF_HOME/LLaVA-NeXT-Video-7B-Qwen2}"

@@ -15,9 +15,10 @@ set -euo pipefail
 LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$LAUNCHER_DIR/.." && pwd)"
 OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
+OOS_MODEL_SOURCE_DIR="${OOS_MODEL_SOURCE_DIR:-$OOS_STORAGE_ROOT}"
 
 export VLM3R_PYTHON="${VLM3R_PYTHON:-$REPO_DIR/.venv-cu128-home/bin/python}"
-export VLM3R_REPO="${VLM3R_REPO:-$OOS_STORAGE_ROOT/VLM-3R}"
+export VLM3R_REPO="${VLM3R_REPO:-$OOS_MODEL_SOURCE_DIR/VLM-3R}"
 export VLM3R_OVERLAY="${VLM3R_OVERLAY:-$OOS_STORAGE_ROOT/python-overlays/vlm3r-cu128}"
 export VLM3R_CUDA_HOME="${VLM3R_CUDA_HOME:-$OOS_STORAGE_ROOT/toolchains/cuda-12.8}"
 

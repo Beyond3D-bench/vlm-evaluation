@@ -14,6 +14,22 @@ class HuggingFaceArtifact:
     revision: str | None
 
 
+@dataclass(frozen=True)
+class SourcePatch:
+    file: Path
+    workdir: Path
+
+
+@dataclass(frozen=True)
+class SourceRepository:
+    model: str
+    url: str
+    directory: str
+    revision: str
+    submodules: dict[str, str]
+    patches: tuple[SourcePatch, ...]
+
+
 def load_manifest(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         manifest = yaml.safe_load(handle)
@@ -49,6 +65,43 @@ def iter_huggingface_artifacts(
     return artifacts
 
 
+def iter_source_repositories(
+    manifest: dict[str, Any], manifest_path: Path, selected_models: Iterable[str] | None = None
+) -> list[SourceRepository]:
+    sources = manifest.get("source_repositories", {})
+    if not isinstance(sources, dict):
+        raise ValueError("source_repositories must be a mapping")
+
+    selected = set(selected_models or sources)
+    unknown = selected.difference(sources)
+    if unknown:
+        raise ValueError(f"Unknown source model selection: {', '.join(sorted(unknown))}")
+
+    repo_root = manifest_path.resolve().parent.parent
+    repositories: list[SourceRepository] = []
+    for model, entry in sources.items():
+        if model not in selected:
+            continue
+        patches = tuple(
+            SourcePatch(
+                file=repo_root / patch["file"],
+                workdir=Path(patch.get("workdir", ".")),
+            )
+            for patch in entry.get("patches", [])
+        )
+        repositories.append(
+            SourceRepository(
+                model=model,
+                url=entry["url"],
+                directory=entry["directory"],
+                revision=entry["revision"],
+                submodules=dict(entry.get("submodules", {})),
+                patches=patches,
+            )
+        )
+    return repositories
+
+
 def require_pinned(artifacts: Iterable[HuggingFaceArtifact]) -> None:
     unpinned = [f"{item.model}: {item.repo_id}" for item in artifacts if not item.revision]
     if unpinned:
@@ -58,4 +111,3 @@ def require_pinned(artifacts: Iterable[HuggingFaceArtifact]) -> None:
             f"  - {details}\n"
             "Recover and record their exact commit IDs in models/manifest.yaml."
         )
-

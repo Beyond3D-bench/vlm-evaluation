@@ -5,24 +5,32 @@ version: 1
 source_repositories:
   vlm3r:
     url: https://github.com/VITA-Group/VLM-3R.git
+    directory: VLM-3R
     revision: 206afd0ece4369457fb3c5c7781a6735fd2bbe8c
     submodules:
       CUT3R: 51244364af3566d6473559f71a81b4accc75c424
     patches:
-      - patches/cut3r-curope-torch2-scalar-type.patch
-      - patches/vlm3r-low-memory-loading.patch
-      - patches/vlm3r-cut3r-weight-path.patch
+      - file: patches/vlm3r-low-memory-loading.patch
+        workdir: .
+      - file: patches/vlm3r-cut3r-weight-path.patch
+        workdir: .
+      - file: patches/cut3r-curope-torch2-scalar-type.patch
+        workdir: CUT3R
   spatial_mllm:
     url: https://github.com/THU-SI/Spatial-MLLM.git
+    directory: Spatial-MLLM
     revision: 9fc47382c7bc5ab52951e6e2e64db08fca0948ee
     patches: []
   cambrian_p:
     url: https://github.com/cambrian-mllm/cambrian-p.git
+    directory: cambrian-p
     revision: b3c15527a9f9c4b70020b874eab66f67b2b03901
     patches:
-      - patches/cambrian-p-offline.patch
+      - file: patches/cambrian-p-offline.patch
+        workdir: .
   stream3d_vlm:
     url: https://github.com/hanxunyu/Stream3D-VLM.git
+    directory: Stream3D-VLM
     revision: 6a7929a18a97eb092398ea6f0a7aad5041e034b4
     patches: []
 

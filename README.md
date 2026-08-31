@@ -13,7 +13,7 @@ generation settings, and scoring are implemented in this repository.
 Reproducibility entry points:
 
 - [`models/manifest.yaml`](models/manifest.yaml): external source and checkpoint revisions.
-- [`models/README.md`](models/README.md): login-node download and offline verification commands.
+- [`models/README.md`](models/README.md): source bootstrap, login-node download, and offline verification commands.
 - [`.env.example`](.env.example): portable storage/cache configuration.
 - [`launchers/README.md`](launchers/README.md): model presets and execution commands.
 

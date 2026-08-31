@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from tools.model_manifest import iter_huggingface_artifacts, load_manifest, require_pinned
+from tools.model_manifest import (
+    iter_huggingface_artifacts,
+    iter_source_repositories,
+    load_manifest,
+    require_pinned,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -11,13 +16,14 @@ MANIFEST_PATH = REPO_ROOT / "models" / "manifest.yaml"
 
 def test_source_revisions_and_patches_are_pinned() -> None:
     manifest = load_manifest(MANIFEST_PATH)
+    sources = iter_source_repositories(manifest, MANIFEST_PATH)
 
-    for source in manifest["source_repositories"].values():
-        revision = source["revision"]
+    for source in sources:
+        revision = source.revision
         assert len(revision) == 40
         assert all(character in "0123456789abcdef" for character in revision)
-        for patch in source.get("patches", []):
-            assert (REPO_ROOT / patch).is_file(), patch
+        for patch in source.patches:
+            assert patch.file.is_file(), patch.file
 
 
 def test_known_vlm3r_assets_are_pinned() -> None:
@@ -37,4 +43,3 @@ def test_unresolved_revision_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="do not have pinned revisions"):
         require_pinned(artifacts)
-
