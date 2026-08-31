@@ -1328,7 +1328,6 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
     if _use_full_video_context():
         full_path = _preprocess_video(video_path)
         doc["video_context"] = "full"
-        doc["stream3d_query_time_sec"] = query_time_sec
         if _needs_anchor_marker(doc):
             marker_xy_norm = _get_anchor_marker_xy_norm(doc)
             if marker_xy_norm is not None:

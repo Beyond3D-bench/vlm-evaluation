@@ -20,7 +20,6 @@ Pass a preset name through `OOS_MODEL`. The available presets are:
 | `internvl` | InternVL 3.5 |
 | `phi4` | Phi-4 Multimodal |
 | `vlm3r` | VLM-3R |
-| `stream3d_vlm` | Stream3D-VLM |
 | `cambrian_p` | Cambrian-P |
 | `spatial_mllm` | Spatial-MLLM v1.1 |
 | `sensenova_internvl` | SenseNova-SI 1.5 InternVL3 8B |

@@ -22,7 +22,6 @@ DEFAULT_MODELS=(
   spatial_mllm
   sensenova_internvl
   sensenova_qwen
-  stream3d_vlm
 )
 
 LIMIT="${OOS_LIMIT:-2}"
@@ -46,7 +45,6 @@ Model flags:
   --spatial-mllm
   --sensenova-internvl
   --sensenova-qwen
-  --stream3d-vlm
   --all
 
 Options:
@@ -84,7 +82,6 @@ while [ "$#" -gt 0 ]; do
     --spatial-mllm) add_model spatial_mllm ;;
     --sensenova-internvl) add_model sensenova_internvl ;;
     --sensenova-qwen) add_model sensenova_qwen ;;
-    --stream3d-vlm) add_model stream3d_vlm ;;
     --all)
       SELECTED_MODELS=("${DEFAULT_MODELS[@]}")
       ;;
@@ -140,9 +137,6 @@ submit_model() {
         "OOS_LIMIT=$LIMIT"
         "OOS_VENV=${OOS_CAMBRIAN_VENV:-$OOS_STORAGE_ROOT/venvs/oos_vlm_evaluation-cu124-cambrianp/bin/activate}"
       )
-      ;;
-    stream3d_vlm)
-      command+=("STREAM3D_VLM_REPO=${STREAM3D_VLM_REPO:-$OOS_STORAGE_ROOT/Stream3D-VLM}")
       ;;
   esac
 

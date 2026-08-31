@@ -64,7 +64,6 @@ key in that mapping, not necessarily the internal `@register_model(...)` name.
 | `qwen3_5` | `qwen3_5.py` | `Qwen3_5` | Qwen3.5 variant that combines Qwen3.5 defaults with the fixed Qwen3-VL chat path. |
 | `sglang` | `sglang.py` | `Sglang` | SGLang runtime backend. The class is registered internally as `sglang_runtime`. |
 | `spatial_mllm` | `spatial_mllm.py` | `SpatialMLLM` | Spatial-MLLM wrapper for Diankun/Spatial-MLLM-v1.1-Instruct checkpoints, preserving the chat text/image/video input contract. |
-| `stream3d_vlm` | `stream3d_vlm.py` | `Stream3DVLM` | Stream3D-VLM wrapper with OOS history and stream-frame prompt controls. |
 | `thyme` | `thyme.py` | `Thyme` | Qwen2.5-VL-based reasoning wrapper with iterative code execution for image tasks. |
 | `vllm` | `vllm.py` | `VLLM` | VLLM `chat()` backend that sends OpenAI-style multimodal messages. |
 | `vllm_generate` | `vllm_generate.py` | `VLLMGenerate` | VLLM `generate()` backend that builds processed multimodal inputs directly. |
@@ -236,12 +235,6 @@ multi-turn evaluation. They distinguish between media already embedded by
 `doc_to_messages` and media loaded from `doc_to_visual`, preserve or rebuild
 history depending on the question class, and optionally track predicted history.
 
-`stream3d_vlm.py` also has OOS-specific controls:
-
-- `oos_history_mode`: `none`, `gold`, or `pred`.
-- `stream_prompt_mode`: `query_after_prefix` or `query_before_video`.
-- `stream_frame_policy`: `auto`, `all`, or timestamp-driven options.
-
 ### Specialized wrappers
 
 - `bagel_lmms_engine.py` requires `lmms-engine` and can save generated images
@@ -287,7 +280,7 @@ packages include:
 - `sglang` for the SGLang runtime backend.
 - `lmms-engine` for BAGEL.
 - `cambrian` from the Cambrian/Cambrian-S package for Cambrian-P.
-- Model-specific repositories for Stream3D-VLM and VLM-3R.
+- The model-specific VLM-3R repository.
 
 If an import is optional, the wrapper usually logs a warning and fails only when
 the missing feature is used.

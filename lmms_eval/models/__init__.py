@@ -126,7 +126,6 @@ AVAILABLE_CHAT_TEMPLATE_MODELS = {
     "vllm_generate": "VLLMGenerate",
     "sglang": "Sglang",
     "spatial_mllm": "SpatialMLLM",
-    "stream3d_vlm": "Stream3DVLM",
     "huggingface": "Huggingface",
     "litellm_chat": "LiteLLMChatCompatible",
     "async_openai": "AsyncOpenAIChat",
