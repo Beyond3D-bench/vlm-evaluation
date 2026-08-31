@@ -18,6 +18,7 @@ export HF_TOKEN="${SECRET_KEY:-${HF_TOKEN:-}}"
 # Local cache/output directories. Defaults are relative to the repository root
 # when launchers/run_oos_eval.sh is used.
 export HF_HOME="${HF_HOME:-/cluster/home/$USER/scratch/hf_cache}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/cluster/home/$USER/scratch/hf_cache/datasets}"
 export LMMS_EVAL_DATASETS_CACHE="${LMMS_EVAL_DATASETS_CACHE:-$HF_DATASETS_CACHE}"
 export LMMS_EVAL_CACHE="${LMMS_EVAL_CACHE:-/cluster/home/$USER/scratch/lmms_eval_cache}"
@@ -28,7 +29,7 @@ export OOS_JOB_CACHE_ROOT="${OOS_JOB_CACHE_ROOT:-$TMPDIR/oos_vlm_evaluation}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$OOS_JOB_CACHE_ROOT/xdg_cache}"
 export TORCH_HOME="${TORCH_HOME:-$OOS_JOB_CACHE_ROOT/torch_cache}"
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$OOS_JOB_CACHE_ROOT/pycache}"
-export OOS_VIDEO_CACHE_DIR="${OOS_VIDEO_CACHE_DIR:-/cluster/home/$USER/scratch/oos_video_cache}"
+export OOS_VIDEO_CACHE_DIR="${OOS_VIDEO_CACHE_DIR:-/cluster/home/$USER/scratch/oos_video_cache3}"
 export OOS_OUTPUT_DIR="${OOS_OUTPUT_DIR:-/cluster/home/$USER/scratch/lmms-eval/outputs/oos_videoqa}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export HF_ENABLE_PARALLEL_LOADING="${HF_ENABLE_PARALLEL_LOADING:-true}"
@@ -36,9 +37,23 @@ export HF_PARALLEL_LOADING_WORKERS="${HF_PARALLEL_LOADING_WORKERS:-4}"
 
 if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
-  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-SpatialMLLM/activate_oos.sh}"
+  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
   export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-/cluster/home/$USER/scratch/checkpoints/Spatial-MLLM-v1.1-Instruct-820K}"
   export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-/cluster/home/$USER/scratch/Spatial-MLLM}"
+  export SPATIAL_MLLM_EXTERNAL_PATH="${SPATIAL_MLLM_EXTERNAL_PATH:-${SPATIAL_MLLM_REPO}/src/qwenvl/external}"
+  export SPATIAL_OVERLAY="${SPATIAL_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/spatial-mllm-cu128}"
+
+  # Prepend in reverse priority order so the final search order is
+  # Spatial-MLLM, bundled VGGT, the dependency overlay, then the base venv.
+  for OOS_PYTHON_PATH in "$SPATIAL_OVERLAY" "$SPATIAL_MLLM_EXTERNAL_PATH" "$SPATIAL_MLLM_REPO"; do
+    case ":${PYTHONPATH:-}:" in
+      *":${OOS_PYTHON_PATH}:"*) ;;
+      *) PYTHONPATH="${OOS_PYTHON_PATH}${PYTHONPATH:+:${PYTHONPATH}}" ;;
+    esac
+  done
+  export PYTHONPATH
+  unset OOS_PYTHON_PATH
+
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
   export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SPATIAL_MLLM_CKPT}"
   export DS_BUILD_OPS="${DS_BUILD_OPS:-0}"
@@ -49,28 +64,65 @@ if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
   export OOS_SPATIAL_LOG_SAMPLES="${OOS_SPATIAL_LOG_SAMPLES:-1}"
 fi
 
-if [ "${OOS_MODEL:-}" = "sensenova_internvl" ] || [ "${OOS_MODEL:-}" = "sensenova_qwen" ]; then
+if [ "${OOS_MODEL:-}" = "phi4" ]; then
+  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
+  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/launchers/activate_phi4_env.sh}"
+  export PHI4_CKPT="${PHI4_CKPT:-/cluster/home/$USER/scratch/checkpoints/Phi-4-multimodal-instruct}"
+  export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
+  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$PHI4_CKPT}"
+fi
+
+if [ "${OOS_MODEL:-}" = "sensenova_internvl" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-SenseNovaSI/activate_oos.sh}"
   export SENSENOVA_INTERNVL_CKPT="${SENSENOVA_INTERNVL_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.5-InternVL3-8B}"
-  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.3-Qwen3-VL-8B}"
   export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-decord}"
   export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
-  if [ "${OOS_MODEL:-}" = "sensenova_internvl" ]; then
-    export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_INTERNVL_CKPT}"
-  else
-    export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_QWEN_CKPT}"
-  fi
+  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_INTERNVL_CKPT}"
+fi
+
+if [ "${OOS_MODEL:-}" = "sensenova_qwen" ]; then
+  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
+  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
+  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.3-Qwen3-VL-8B}"
+  export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
+  export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
+  export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
+  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_QWEN_CKPT}"
+fi
+
+if [ "${OOS_MODEL:-}" = "cambrian_p" ]; then
+  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
+  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
+  export CAMBRIAN_OVERLAY="${CAMBRIAN_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/cambrian-cu128}"
+  export CAMBRIAN_P_PATH="${CAMBRIAN_P_PATH:-/cluster/home/$USER/scratch/cambrian-p}"
+  export CAMBRIAN_P_VGGT_PATH="${CAMBRIAN_P_VGGT_PATH:-${CAMBRIAN_P_PATH}/vggt}"
+
+  # Prepend in reverse priority order so the final search order is
+  # Cambrian-P, VGGT, then the lightweight dependency overlay.
+  for OOS_PYTHON_PATH in "$CAMBRIAN_OVERLAY" "$CAMBRIAN_P_VGGT_PATH" "$CAMBRIAN_P_PATH"; do
+    case ":${PYTHONPATH:-}:" in
+      *":${OOS_PYTHON_PATH}:"*) ;;
+      *) PYTHONPATH="${OOS_PYTHON_PATH}${PYTHONPATH:+:${PYTHONPATH}}" ;;
+    esac
+  done
+  export PYTHONPATH
+  unset OOS_PYTHON_PATH
 fi
 
 # OOS task behavior.
 export OOS_VENV="${OOS_VENV:-.venv-cu128-home/bin/activate}"
+export OOS_DATASET_JSONL="${OOS_DATASET_JSONL:-/cluster/home/$USER/scratch/data/vqa/sample_100_ordered_future_object_reference_next_movement_end.jsonl}"
 export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-}"
 export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-none}"          # none, gold, pred
 export LMMS_EVAL_SHUFFLE_DOCS="${LMMS_EVAL_SHUFFLE_DOCS:-0}" # keep 0 for pred mode
 export OOS_NO_VIDEO_INPUT="${OOS_NO_VIDEO_INPUT:-0}"
 export OOS_CHAT_DEBUG="${OOS_CHAT_DEBUG:-1}" # set to 1 to print model prompt/media diagnostics
+export OOS_VIDEO_CONTEXT="${OOS_VIDEO_CONTEXT:-last_frame}" # prefix or last_frame
+export OOS_MARK_ANCHOR_OBJECT="${OOS_MARK_ANCHOR_OBJECT:-1}" 
+# Position the dataset-provided target reference relative to the video: before or after.
+export OOS_TARGET_REFERENCE_POSITION="${OOS_TARGET_REFERENCE_POSITION:-after}"
 
 # Video preprocessing and scoring.
 # Currently the input video is already preprocessed to fps=1 & 448x448, so we don't need to preprocess it again.
@@ -92,10 +144,14 @@ export OOS_COORD_TOLERANCE_NORM="${OOS_COORD_TOLERANCE_NORM:-0.2}"
 # export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchcodec}"
 export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
 
-# VLM-3R needs a separate clone on PYTHONPATH.
-export VLM3R_REPO="${VLM3R_REPO:-}"
-export VLM3R_CKPT="${VLM3R_CKPT:-Journey9ni/vlm-3r-llava-qwen2-lora}"
-export VLM3R_BASE="${VLM3R_BASE:-lmms-lab/LLaVA-NeXT-Video-7B-Qwen2}"
+# VLM-3R local source, dependency overlay, LoRA adapter, and base model.
+export VLM3R_REPO="${VLM3R_REPO:-/cluster/home/$USER/scratch/VLM-3R}"
+export VLM3R_OVERLAY="${VLM3R_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/vlm3r-cu128}"
+export VLM3R_CKPT="${VLM3R_CKPT:-/cluster/home/$USER/scratch/hf_cache/vlm-3r-llava-qwen2-lora}"
+export VLM3R_BASE="${VLM3R_BASE:-/cluster/home/$USER/scratch/hf_cache/LLaVA-NeXT-Video-7B-Qwen2}"
+export VLM3R_CUT3R_WEIGHTS="${VLM3R_CUT3R_WEIGHTS:-$VLM3R_REPO/CUT3R/src/cut3r_512_dpt_4_64.pth}"
+# Copy all VLM-3R checkpoints to the Slurm job's node-local 100 GB TMPDIR.
+export VLM3R_STAGE_TO_TMP="${VLM3R_STAGE_TO_TMP:-1}"
 
 # Current ETH 3dv GB10 settings used by the existing Qwen3.6 script.
 # export TORCH_CUDNN_V8_API_DISABLED=1 # This needs to be disabled on euler!!! Otherwise qwen3.5 will take around 680 times longer

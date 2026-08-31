@@ -55,6 +55,7 @@ class Phi4(lmms):
         chat_template: Optional[str] = None,
         use_cache: bool = True,
         max_frames_num: Optional[int] = 16,
+        local_files_only: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -76,6 +77,7 @@ class Phi4(lmms):
             pretrained,
             revision=revision,
             trust_remote_code=trust_remote_code,
+            local_files_only=local_files_only,
         )
 
         if attn_implementation is not None:
@@ -87,19 +89,30 @@ class Phi4(lmms):
         print("[PHI DEBUG] attn_implementation =", attn_implementation, flush=True)
         print("[PHI DEBUG] config._attn_implementation =", getattr(config, "_attn_implementation", None), flush=True)
 
-        self._model = AutoModelForCausalLM.from_pretrained(
-            pretrained,
-            revision=revision,
-            config=config,
-            torch_dtype=dtype,
-            device_map=self.device_map,
-            trust_remote_code=trust_remote_code,
-            attn_implementation=attn_implementation,
-        )
+        model_load_kwargs = {
+            "revision": revision,
+            "config": config,
+            "torch_dtype": dtype,
+            "trust_remote_code": trust_remote_code,
+            "attn_implementation": attn_implementation,
+            "local_files_only": local_files_only,
+            "low_cpu_mem_usage": False,
+        }
+        # Transformers rejects device_map="". An empty value means that this
+        # wrapper loads normally and moves the model to self._device below.
+        if self.device_map:
+            model_load_kwargs["device_map"] = self.device_map
+
+        self._model = AutoModelForCausalLM.from_pretrained(pretrained, **model_load_kwargs).eval()
         #self._model = AutoModelForCausalLM.from_pretrained(pretrained, revision=revision, torch_dtype=dtype, device_map=self.device_map, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation)
 
         self.pretrained = pretrained
-        self._processor = AutoProcessor.from_pretrained(pretrained, revision=revision, trust_remote_code=trust_remote_code)
+        self._processor = AutoProcessor.from_pretrained(
+            pretrained,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            local_files_only=local_files_only,
+        )
         # Pad from left for batched generation: https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/llava#usage-tips
         self._processor.tokenizer.padding_side = "left"
         self._tokenizer = self._processor.tokenizer

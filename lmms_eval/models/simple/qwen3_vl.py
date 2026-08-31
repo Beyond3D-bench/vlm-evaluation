@@ -84,6 +84,7 @@ class Qwen3_VL(lmms):
         system_prompt: Optional[str] = "You are a helpful assistant.",
         interleave_visuals: Optional[bool] = False,
         enable_thinking: Optional[bool] = None,
+        preserve_reasoning: Optional[bool] = False,
         reasoning_prompt: Optional[str] = None,
         local_files_only: bool = False,
         **kwargs,
@@ -122,6 +123,7 @@ class Qwen3_VL(lmms):
         self.max_num_frames = max_num_frames
         self.fps = fps
         self.enable_thinking = enable_thinking
+        self.preserve_reasoning = preserve_reasoning
 
         if reasoning_prompt:
             self.reasoning_prompt = reasoning_prompt.replace("\\n", "\n")
@@ -266,6 +268,12 @@ class Qwen3_VL(lmms):
             return remaining.strip()
         return answer
 
+    def _answer_for_return(self, answer):
+        """Optionally retain raw reasoning for evaluator-level logging/stripping."""
+        if self.preserve_reasoning:
+            return answer
+        return self._strip_thinking(answer)
+
     def _preprocess_chunk(self, chunk):
         """Preprocess a batch chunk on CPU: message building, video decoding, tokenization.
 
@@ -392,6 +400,7 @@ class Qwen3_VL(lmms):
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
+        self.emits_live_results_during_generation = True
 
         def _collate(x):
             toks = self.tokenizer.encode(x[0])
@@ -401,6 +410,7 @@ class Qwen3_VL(lmms):
         re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
         chunks = list(re_ords.get_batched(n=self.batch_size, batch_fn=None))
 
+        sorted_response_index = 0
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(self._preprocess_chunk, chunks[0]) if chunks else None
 
@@ -431,9 +441,15 @@ class Qwen3_VL(lmms):
                     answers[i] = ans
 
                 for ans, context in zip(answers, contexts):
-                    ans = self._strip_thinking(ans)
-                    res.append(ans)
-                    self.cache_hook.add_partial("generate_until", (context, gen_kwargs), ans)
+                    scored_ans = self._strip_thinking(ans)
+                    returned_ans = self._answer_for_return(ans)
+                    res.append(returned_ans)
+                    self.cache_hook.add_partial("generate_until", (context, gen_kwargs), returned_ans)
+                    live_callback = getattr(self, "live_result_callback", None)
+                    if live_callback is not None:
+                        original_index = re_ords.reorder_indices[sorted_response_index]
+                        live_callback(requests[original_index], scored_ans)
+                    sorted_response_index += 1
                     pbar.update(1)
 
         res = re_ords.get_original(res)

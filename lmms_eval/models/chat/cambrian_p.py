@@ -19,20 +19,21 @@ from lmms_eval.api.registry import register_model
 from lmms_eval.protocol import ChatMessages
 
 try:
-    from cambrian.constants import (
+    from cambrianp.constants import (
         DEFAULT_IM_END_TOKEN,
         DEFAULT_IM_START_TOKEN,
         DEFAULT_IMAGE_TOKEN,
         IMAGE_TOKEN_INDEX,
     )
-    from cambrian.conversation import conv_templates
-    from cambrian.mm_utils import (
+    from cambrianp.conversation import SeparatorStyle, conv_templates
+    from cambrianp.mm_utils import (
+        KeywordsStoppingCriteria,
         expand2square,
         get_model_name_from_path,
         process_images,
         tokenizer_image_token,
     )
-    from cambrian.model.builder import load_pretrained_model
+    from cambrianp.model.builder import load_pretrained_model
 
     _CAMBRIAN_IMPORT_ERROR = None
 except ImportError as exc:
@@ -40,6 +41,8 @@ except ImportError as exc:
     DEFAULT_IM_START_TOKEN = "<im_start>"
     DEFAULT_IMAGE_TOKEN = "<image>"
     IMAGE_TOKEN_INDEX = -200
+    KeywordsStoppingCriteria = None
+    SeparatorStyle = None
     conv_templates = None
     expand2square = None
     get_model_name_from_path = None
@@ -52,8 +55,9 @@ except ImportError as exc:
 def _require_cambrian() -> None:
     if _CAMBRIAN_IMPORT_ERROR is not None:
         raise ImportError(
-            "Cambrian-P requires the Cambrian package. Install the Cambrian/Cambrian-S "
-            "package, for example: pip install git+https://github.com/cambrian-mllm/cambrian-s.git"
+            "Cambrian-P requires the official cambrianp package from "
+            "https://github.com/cambrian-mllm/cambrian-p. Set CAMBRIAN_P_PATH "
+            "and CAMBRIAN_P_VGGT_PATH to the local source trees."
         ) from _CAMBRIAN_IMPORT_ERROR
 
 
@@ -93,16 +97,23 @@ def process_video_with_decord(video_file, model_cfg, num_threads=-1):
     else:
         vr = VideoReader(video_file, ctx=cpu(0), num_threads=num_threads)
     total_frame_num = len(vr)
-    video_time = total_frame_num / vr.get_avg_fps()
-    avg_fps = round(vr.get_avg_fps() / model_cfg.video_fps)
+    if total_frame_num == 0:
+        raise ValueError(f"Cambrian-P could not decode any frames from {video_file}")
+
+    source_fps = float(vr.get_avg_fps())
+    if source_fps <= 0:
+        raise ValueError(f"Cambrian-P received an invalid FPS ({source_fps}) for {video_file}")
+
+    video_time = total_frame_num / source_fps
+    avg_fps = max(1, round(source_fps / model_cfg.video_fps))
     frame_idx = [i for i in range(0, total_frame_num, avg_fps)]
-    frame_time = [i / avg_fps for i in frame_idx]
+    frame_time = [i / source_fps for i in frame_idx]
 
     if model_cfg.video_max_frames > 0:
         if len(frame_idx) > model_cfg.video_max_frames or model_cfg.video_force_sample:
             uniform_sampled_frames = np.linspace(0, total_frame_num - 1, model_cfg.video_max_frames, dtype=int)
             frame_idx = uniform_sampled_frames.tolist()
-            frame_time = [i / vr.get_avg_fps() for i in frame_idx]
+            frame_time = [i / source_fps for i in frame_idx]
 
     video = vr.get_batch(frame_idx).asnumpy()
     frame_time = ",".join([f"{i:.2f}s" for i in frame_time])
@@ -112,25 +123,40 @@ def process_video_with_decord(video_file, model_cfg, num_threads=-1):
 
 
 def process_videos(videos, image_processor, model_cfg, num_threads=-1):
-    processor_aux_list = image_processor
-    new_videos_aux_list = []
+    processed_videos = []
     video_sizes = []
+    video_metadata = None
 
     for video in videos:
         video, video_time, frame_time, num_frames_to_sample = process_video_with_decord(video, model_cfg, num_threads=num_threads)
-        video_sizes.append((video.shape[2], video.shape[1], video.shape[0]))
-        video = [Image.fromarray(video[_], mode="RGB") for _ in range(video.shape[0])]
+        video_sizes.append([video.shape[1], video.shape[2]])
+        frames = [
+            expand2square(
+                Image.fromarray(frame, mode="RGB"),
+                tuple(int(x * 255) for x in image_processor.image_mean),
+            )
+            for frame in video
+        ]
+        processed_videos.append(image_processor.preprocess(frames, return_tensors="pt")["pixel_values"])
+        video_metadata = (video_time, frame_time, num_frames_to_sample)
 
-        video_aux_list = []
-        for processor_aux in processor_aux_list:
-            video_aux = [expand2square(image, tuple(int(x * 255) for x in processor_aux.image_mean)) for image in video]
-            video_aux_list.append(processor_aux.preprocess(video_aux, return_tensors="pt")["pixel_values"])
+    return processed_videos, video_sizes, video_metadata
 
-        new_videos_aux_list.append(video_aux_list)
 
-    new_videos_aux_list = [list(batch_video_aux) for batch_video_aux in zip(*new_videos_aux_list)]
-    new_videos_aux_list = [torch.stack(video_aux) for video_aux in new_videos_aux_list]
-    return new_videos_aux_list, video_sizes, (video_time, frame_time, num_frames_to_sample)
+def process_images_as_single_frames(images, image_processor):
+    """Use Cambrian-P's video-frame preprocessing for still images.
+
+    Camera-token reconstruction treats the leading visual dimension as time.
+    The normal any-resolution image path uses that dimension for spatial crops,
+    so a still image must remain a single item when camera tokens are enabled.
+    """
+    background = tuple(int(value * 255) for value in image_processor.image_mean)
+    processed_images = []
+    for image in images:
+        frame = expand2square(image, background)
+        pixels = image_processor.preprocess([frame], return_tensors="pt")["pixel_values"]
+        processed_images.append(pixels)
+    return processed_images
 
 
 @register_model("cambrian_p_chat")
@@ -138,36 +164,56 @@ class CambrianP(lmms):
     """
     Cambrian-P chat wrapper.
 
-    Cambrian-P is loaded through the Cambrian model builder and uses the same
-    multimodal tensor path as the Cambrian-S wrappers. The difference from the
-    simple Cambrian-S backend is that this class consumes task doc_to_messages
-    directly, preserving chat history and typed image/video content.
+    This wrapper follows the official Cambrian-P lmms-eval adapter while
+    consuming task doc_to_messages directly, preserving chat history and typed
+    image/video content.
     """
 
     is_simple = False
 
     def __init__(
         self,
-        pretrained: str = "nyu-visionx/Cambrian-P-8B",
+        pretrained: str = "nyu-visionx/Cambrian-P-7B",
+        model_name: Optional[str] = "llava_qwen",
         torch_dtype: Optional[Union[str, torch.dtype]] = "float16",
         batch_size: Optional[Union[int, str]] = 1,
         device_map: str = "cuda:0",
-        conv_template: str = "qwen_2",
+        conv_template: str = "qwen_1_5",
         use_cache: bool = True,
         truncate_context: bool = False,
-        video_max_frames: int = 32,
+        video_max_frames: int = 128,
         video_fps: int = 1,
-        video_force_sample: bool = False,
-        add_time_instruction: bool = False,
-        miv_token_len: int = 196,
-        si_token_len: int = 729,
-        image_aspect_ratio: str = "anyres",
-        anyres_max_subimages: int = 9,
+        video_force_sample: bool = True,
+        mm_spatial_pool_stride: int = 2,
+        mm_spatial_pool_mode: str = "bilinear",
+        use_camera_tokens: bool = True,
+        camera_tokens_mode: str = "camera_tokens",
+        camera_tokens_place: str = "append_to_frame",
+        query_mode: str = "query_after_image",
         **kwargs,
     ) -> None:
         super().__init__()
         _require_cambrian()
         loader_kwargs = dict(kwargs)
+        loader_kwargs.setdefault("multimodal", True)
+        loader_kwargs.setdefault("attn_implementation", "sdpa")
+        if isinstance(torch_dtype, torch.dtype):
+            torch_dtype = str(torch_dtype).removeprefix("torch.")
+        loader_kwargs.setdefault("torch_dtype", torch_dtype)
+
+        overwrite_config = dict(loader_kwargs.pop("overwrite_config", {}) or {})
+        overwrite_config.update(
+            {
+                "mm_spatial_pool_stride": mm_spatial_pool_stride,
+                "mm_spatial_pool_mode": mm_spatial_pool_mode,
+                "use_camera_tokens": use_camera_tokens,
+                "camera_tokens_mode": camera_tokens_mode,
+                "camera_tokens_place": camera_tokens_place,
+                "query_mode": query_mode,
+                "camera_token_indices": [0],
+            }
+        )
+        loader_kwargs["overwrite_config"] = overwrite_config
 
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
@@ -183,7 +229,7 @@ class CambrianP(lmms):
             self.device_map = f"cuda:{accelerator.local_process_index}"
 
         self.pretrained = pretrained
-        self.model_name = get_model_name_from_path(pretrained)
+        self.model_name = model_name or get_model_name_from_path(pretrained)
         self.torch_dtype = torch_dtype
         self.conv_template = conv_template
         self.use_cache = use_cache
@@ -204,12 +250,6 @@ class CambrianP(lmms):
         self._model.config.video_max_frames = video_max_frames
         self._model.config.video_fps = video_fps
         self._model.config.video_force_sample = video_force_sample
-        self._model.config.add_time_instruction = add_time_instruction
-        self._model.config.connector_only = getattr(self._model.config, "connector_only", True)
-        self._model.config.miv_token_len = miv_token_len
-        self._model.config.si_token_len = si_token_len
-        self._model.config.image_aspect_ratio = image_aspect_ratio
-        self._model.config.anyres_max_subimages = anyres_max_subimages
 
         self._config = self._model.config
         self.model.eval()
@@ -293,7 +333,7 @@ class CambrianP(lmms):
             return Image.open(image).convert("RGB")
         return image
 
-    def _message_text_and_media(self, chat_messages: ChatMessages) -> Tuple[List[dict], List[Any]]:
+    def _message_text_and_media(self, chat_messages: ChatMessages) -> Tuple[Optional[str], List[dict], List[Any]]:
         system_parts: List[str] = []
         turns: List[dict] = []
         media: List[Any] = []
@@ -323,14 +363,8 @@ class CambrianP(lmms):
             else:
                 raise ValueError(f"Unsupported chat role for Cambrian-P: {message.role}")
 
-        if system_parts:
-            system_text = "\n".join(system_parts)
-            if turns and turns[0]["role"] == "user":
-                turns[0]["text"] = f"{system_text}\n{turns[0]['text']}"
-            else:
-                turns.insert(0, {"role": "user", "text": system_text})
-
-        return turns, media
+        system_text = "\n".join(system_parts) if system_parts else None
+        return system_text, turns, media
 
     def _process_media(self, media: List[Any]):
         if not media:
@@ -338,7 +372,9 @@ class CambrianP(lmms):
 
         if all(is_image_file(item) for item in media):
             images = [self._normalise_image(item) for item in media]
-            return process_images(images, self._image_processor, self._config, use_pad=True)
+            if getattr(self._config, "use_camera_tokens", False):
+                return process_images_as_single_frames(images, self._image_processor), [image.size for image in images]
+            return process_images(images, self._image_processor, self._config), [image.size for image in images]
 
         if len(media) == 1 and is_video_file(media[0]):
             visual = media[0]
@@ -369,38 +405,49 @@ class CambrianP(lmms):
                 visual_sizes.append(sizes[0])
             elif is_image_file(item):
                 image = self._normalise_image(item)
-                tensors, sizes = process_images([image], self._image_processor, self._config, use_pad=True)
-                visual_tensors.append(tensors[0])
-                visual_sizes.append(sizes[0])
+                if getattr(self._config, "use_camera_tokens", False):
+                    tensors = process_images_as_single_frames([image], self._image_processor)
+                else:
+                    tensors = process_images([image], self._image_processor, self._config)
+                visual_tensors.append(tensors[0] if isinstance(tensors, torch.Tensor) else tensors[0])
+                visual_sizes.append(image.size)
             else:
                 raise NotImplementedError(f"Unsupported Cambrian-P media item: {type(item).__name__} {item!r}")
 
         return visual_tensors, visual_sizes
 
-    def _build_prompt(self, turns: List[dict]) -> str:
+    def _build_prompt(self, system_text: Optional[str], turns: List[dict]) -> str:
         if not turns:
             raise ValueError("doc_to_messages produced no text turns for Cambrian-P.")
+        if turns[-1]["role"] != "user":
+            raise ValueError("Cambrian-P generation expects the final chat turn to be a user message.")
+        if self.conv_template not in conv_templates:
+            raise ValueError(f"Unknown Cambrian-P conversation template: {self.conv_template}")
 
-        prompt_parts: List[str] = []
+        conv = conv_templates[self.conv_template].copy()
+        if system_text:
+            if conv.system.startswith("<|im_start|>system\n"):
+                conv.system = f"<|im_start|>system\n{system_text}"
+            else:
+                conv.system = system_text
+
         for turn in turns:
             text = turn.get("text")
             if not text:
                 continue
-            role = "assistant" if turn.get("role") == "assistant" else "user"
-            prompt_parts.append(f"<|im_start|>{role}\n{text}<|im_end|>")
+            role = conv.roles[1] if turn.get("role") == "assistant" else conv.roles[0]
+            conv.append_message(role, text)
 
-        if turns[-1]["role"] != "assistant":
-            prompt_parts.append("<|im_start|>assistant\n")
-
-        return "\n".join(prompt_parts)
+        conv.append_message(conv.roles[1], None)
+        return conv.get_prompt()
 
     def _make_one_request(self, request: Instance):
         _, doc_to_messages, gen_kwargs, doc_id, task, split = request.args
         raw_messages = doc_to_messages(self.task_dict[task][split][doc_id])
         chat_messages = ChatMessages(messages=raw_messages)
-        turns, media = self._message_text_and_media(chat_messages)
+        system_text, turns, media = self._message_text_and_media(chat_messages)
         visual_tensors, visual_sizes = self._process_media(media)
-        prompt = self._build_prompt(turns)
+        prompt = self._build_prompt(system_text, turns)
         tensor_shapes = None
         if visual_tensors is not None:
             tensor_shapes = [tuple(tensor.shape) for tensor in visual_tensors]
@@ -412,7 +459,8 @@ class CambrianP(lmms):
             tensor_shapes=tensor_shapes,
         )
         input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0)
-        return input_ids, visual_tensors, visual_sizes, prompt, dict(gen_kwargs or {})
+        modalities = ["video" if is_video_file(item) else "image" for item in media]
+        return input_ids, visual_tensors, visual_sizes, prompt, dict(gen_kwargs or {}), modalities
 
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
         raise NotImplementedError("Cambrian-P chat does not implement loglikelihood.")
@@ -423,7 +471,7 @@ class CambrianP(lmms):
 
         for request in requests:
             doc_id = request.args[3]
-            input_ids, visual_tensors, visual_sizes, prompt, gen_kwargs = self._make_one_request(request)
+            input_ids, visual_tensors, visual_sizes, prompt, gen_kwargs, modalities = self._make_one_request(request)
 
             until = gen_kwargs.pop("until", [self.tokenizer.decode(self.eot_token_id)])
             if isinstance(until, str):
@@ -435,27 +483,39 @@ class CambrianP(lmms):
             gen_kwargs.setdefault("temperature", 0)
             gen_kwargs.setdefault("top_p", None)
             gen_kwargs.setdefault("num_beams", 1)
+            gen_kwargs.setdefault("do_sample", gen_kwargs["temperature"] > 0)
 
             input_ids = input_ids.to(self.device, non_blocking=True)
+            pad_token_id = self.tokenizer.pad_token_id
+            if pad_token_id is None:
+                pad_token_id = self.tokenizer.eos_token_id
+            attention_mask = input_ids.ne(pad_token_id).to(self.device)
             if visual_tensors is not None:
                 visual_tensors = [tensor.half().to(self.device, non_blocking=True) for tensor in visual_tensors]
 
+            conv = conv_templates[self.conv_template].copy()
+            stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+            stopping_criteria = KeywordsStoppingCriteria([stop_str], self.tokenizer, input_ids)
+            generation_kwargs = dict(gen_kwargs)
+            generation_kwargs.setdefault("stopping_criteria", [stopping_criteria])
+
             with torch.inference_mode():
-                output_ids = self.model.generate(
+                generation_output = self.model.generate(
                     inputs=input_ids,
+                    attention_mask=attention_mask,
+                    pad_token_id=pad_token_id,
                     images=visual_tensors,
                     image_sizes=visual_sizes,
+                    modalities=modalities or ["image"],
                     use_cache=self.use_cache,
-                    do_sample=gen_kwargs["temperature"] > 0,
-                    temperature=gen_kwargs["temperature"],
-                    top_p=gen_kwargs["top_p"],
-                    num_beams=gen_kwargs["num_beams"],
-                    max_new_tokens=gen_kwargs["max_new_tokens"],
+                    **generation_kwargs,
                 )
+
+            output_ids = generation_output[0] if isinstance(generation_output, tuple) else generation_output
 
             output_tokens = output_ids.shape[-1] if hasattr(output_ids, "shape") else None
             text = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-            for term in until:
+            for term in [stop_str, *until]:
                 if term:
                     text = text.split(term)[0]
 

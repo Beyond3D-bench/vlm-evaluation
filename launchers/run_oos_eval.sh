@@ -36,6 +36,12 @@ fi
 OUTPUT_PATH="$OOS_OUTPUT_DIR/$OUTPUT_SUBDIR"
 mkdir -p "$OUTPUT_PATH"
 
+if [ "${OOS_STREAM_RESULTS:-0}" = "1" ]; then
+  LIVE_RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)_$$}"
+  export OOS_LIVE_RESULTS_PATH="${OOS_LIVE_RESULTS_PATH:-$OUTPUT_PATH/${LIVE_RUN_ID}_live_results.jsonl}"
+  echo "Live results: $OOS_LIVE_RESULTS_PATH"
+fi
+
 print_oos_run_summary
 echo "Starting lmms_eval at $(date -Is)"
 

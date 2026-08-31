@@ -8,6 +8,7 @@ import os
 import random
 import re
 from datetime import timedelta
+from pathlib import Path
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -890,8 +891,6 @@ def evaluate(
         task_name = task_output.task_name
         task.args = cli_args
 
-        name_to_task[task_name] = task
-
         if type(task) == tuple:
             group_name, task = task
             task_hierarchy[group_name].append(task_name)
@@ -903,6 +902,7 @@ def evaluate(
         if task is None:
             continue
 
+        name_to_task[task_name] = task
         versions[task_name] = task.VERSION
         configs[task_name] = dict(task.dump_config())
 
@@ -989,6 +989,55 @@ def evaluate(
         canonical_reqtypes = list(requests.keys())
 
     # execute each type of request
+    live_results_handle = None
+    live_results_callback = None
+    live_results_path = os.environ.get("OOS_LIVE_RESULTS_PATH")
+    if live_results_path and log_samples:
+        path = Path(live_results_path)
+        if world_size > 1:
+            path = path.with_name(f"{path.stem}.rank{global_rank}{path.suffix}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        live_results_handle = path.open("w", encoding="utf-8", buffering=1)
+        live_sequence = 0
+        live_logging_failed = False
+
+        def _write_live_result(request: Instance, response: str) -> None:
+            nonlocal live_sequence, live_logging_failed
+            if live_logging_failed:
+                return
+            try:
+                task = name_to_task[request.task_name]
+                doc = request.doc
+                if doc is None:
+                    doc = task.eval_docs[int(request.doc_id)]
+                metrics = task.process_results(doc, [response])
+                payload = {
+                    "sequence": live_sequence,
+                    "task_name": request.task_name,
+                    "doc_id": request.doc_id,
+                    "prediction": response,
+                    "metrics": metrics,
+                }
+                live_results_handle.write(
+                    json.dumps(
+                        payload,
+                        default=handle_non_serializable,
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                live_results_handle.flush()
+                live_sequence += 1
+            except Exception:
+                live_logging_failed = True
+                eval_logger.exception(
+                    "Disabling live result logging after a write/scoring failure"
+                )
+
+        live_results_callback = _write_live_result
+        lm.live_result_callback = live_results_callback
+        eval_logger.info(f"Streaming evaluated records to {path}")
+
     for reqtype in canonical_reqtypes:
         reqs = requests.get(reqtype, [])
         eval_logger.info("Running {} requests".format(reqtype))
@@ -1025,6 +1074,11 @@ def evaluate(
             text, tc = unwrap_generation_output(x)
             req.resps.append(text)
             req.token_counts.append(tc)
+            if (
+                live_results_callback is not None
+                and not getattr(lm, "emits_live_results_during_generation", False)
+            ):
+                live_results_callback(req, text)
 
         if is_budget_exceeded():
             eval_logger.warning("Token budget reached after '{}' requests. Skipping remaining request types.", reqtype)
@@ -1037,6 +1091,10 @@ def evaluate(
                 dist.barrier()
             else:
                 raise ValueError(f"Invalid distributed_executor_backend: {distributed_executor_backend}. Choose either 'accelerate' or 'torchrun'.")
+
+    if live_results_handle is not None:
+        live_results_handle.close()
+        lm.live_result_callback = None
 
     # Cleaning lm's cuda memory if you are launching llm as judge in local
     lm.clean()

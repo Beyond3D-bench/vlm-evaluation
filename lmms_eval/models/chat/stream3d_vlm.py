@@ -1,4 +1,5 @@
 import gc
+import hashlib
 import os
 import sys
 import time
@@ -99,6 +100,8 @@ class Stream3DVLM(lmms):
         return " ".join(parts) or "memory=unavailable"
 
     def _cleanup_memory(self, label: str) -> None:
+        if not getattr(self, "stream_memory_cleanup", False):
+            return
         before = self._memory_summary()
         gc.collect()
         if torch.cuda.is_available():
@@ -127,6 +130,9 @@ class Stream3DVLM(lmms):
         stream_prompt_mode: Optional[str] = None,
         stream_frame_policy: Optional[str] = None,
         stream_frame_timestamps: Optional[Any] = None,
+        stream_prefix_chunk_size: int = 4,
+        stream_prefix_cache: Optional[Any] = None,
+        stream_memory_cleanup: Optional[Any] = None,
         max_new_tokens: int = 512,
         temperature: float = 0.0,
         **kwargs,
@@ -187,6 +193,37 @@ class Stream3DVLM(lmms):
         else:
             self.stream_frame_timestamps = bool(frame_timestamps_value)
 
+        self.stream_prefix_chunk_size = int(
+            os.getenv("STREAM3D_PREFIX_CHUNK_SIZE", str(stream_prefix_chunk_size))
+        )
+        if self.stream_prefix_chunk_size < 0:
+            raise ValueError("stream_prefix_chunk_size must be >= 0 (0 means the full prefix).")
+
+        prefix_cache_value = stream_prefix_cache
+        if prefix_cache_value is None:
+            prefix_cache_value = os.getenv("STREAM3D_PREFIX_CACHE", "1")
+        if isinstance(prefix_cache_value, str):
+            self.stream_prefix_cache = prefix_cache_value.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            self.stream_prefix_cache = bool(prefix_cache_value)
+        self._stream_media_cache_key = None
+        self._stream_media_cache_frames: Optional[List[Image.Image]] = None
+        self._stream_prefix_cache_key = None
+        self._stream_prefix_cache_past = None
+        self._stream_prefix_cache_seq_len = 0
+        self._stream_prefix_fingerprint_key = None
+        self._stream_prefix_fingerprint_value = None
+        self._last_media_cache_hit = False
+        self._last_prefix_cache_hit = False
+
+        memory_cleanup_value = stream_memory_cleanup
+        if memory_cleanup_value is None:
+            memory_cleanup_value = os.getenv("STREAM3D_MEMORY_CLEANUP", "0")
+        if isinstance(memory_cleanup_value, str):
+            self.stream_memory_cleanup = memory_cleanup_value.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            self.stream_memory_cleanup = bool(memory_cleanup_value)
+
         accelerator = Accelerator(kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(weeks=52))])
         self.accelerator = accelerator
         self._rank = accelerator.local_process_index
@@ -211,6 +248,7 @@ class Stream3DVLM(lmms):
             self._model = self._model.to(self.device)
         self._config = self.model.config
         self._load_stream3d_preprocess()
+        self._install_inference_optimizations()
 
         self.frame_interval_token_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
         self.frame_end_token_id = self.tokenizer.encode("\n", add_special_tokens=False)[0]
@@ -218,6 +256,11 @@ class Stream3DVLM(lmms):
         self.im_start_token_id = self.tokenizer.convert_tokens_to_ids("<|im_start|>")
         self.assistant_token_ids = self.tokenizer.encode("assistant", add_special_tokens=False)
         self.newline_token_id = self.tokenizer.encode("\n", add_special_tokens=False)[0]
+        eval_logger.info(
+            f"Stream3D prefix prefill: chunk_size={self.stream_prefix_chunk_size} "
+            f"(0=full official prefix), prefix_cache={self.stream_prefix_cache}, "
+            f"memory_cleanup={self.stream_memory_cleanup}"
+        )
 
     @staticmethod
     def _model_class(require_geometry: bool = True):
@@ -312,7 +355,62 @@ class Stream3DVLM(lmms):
         )
         return pil_frames
 
-    def _media_to_frames(self, messages: ChatMessages) -> List[Image.Image]:
+    @staticmethod
+    def _media_identity(media: Any) -> Tuple[str, Any]:
+        if isinstance(media, Image.Image):
+            return "pil", id(media)
+        return "path", os.path.abspath(os.fspath(media))
+
+    def _media_cache_key(self, messages: ChatMessages) -> Tuple[Any, ...]:
+        images, videos, _ = messages.extract_media()
+        return (
+            self.max_frames,
+            self.video_decoder,
+            tuple(self._media_identity(video) for video in videos),
+            tuple(self._media_identity(image) for image in images),
+        )
+
+    def _clear_stream_prefix_cache(self) -> None:
+        self._stream_prefix_cache_key = None
+        self._stream_prefix_cache_past = None
+        self._stream_prefix_cache_seq_len = 0
+
+    def _prefix_frame_fingerprint(
+        self,
+        frames: List[Image.Image],
+        num_images_before_query: int,
+        media_cache_key: Optional[Tuple[Any, ...]],
+    ) -> str:
+        fingerprint_key = (media_cache_key, num_images_before_query)
+        if (
+            fingerprint_key == self._stream_prefix_fingerprint_key
+            and self._stream_prefix_fingerprint_value is not None
+        ):
+            return self._stream_prefix_fingerprint_value
+
+        digest = hashlib.blake2b(digest_size=16)
+        digest.update(str(num_images_before_query).encode("ascii"))
+        for frame in frames[:num_images_before_query]:
+            digest.update(frame.mode.encode("ascii"))
+            digest.update(f"{frame.width}x{frame.height}:".encode("ascii"))
+            digest.update(frame.tobytes())
+        value = digest.hexdigest()
+        self._stream_prefix_fingerprint_key = fingerprint_key
+        self._stream_prefix_fingerprint_value = value
+        return value
+
+    def _media_to_frames(self, messages: ChatMessages, media_cache_key: Optional[Tuple[Any, ...]] = None) -> List[Image.Image]:
+        if (
+            self.stream_prefix_cache
+            and media_cache_key is not None
+            and media_cache_key == self._stream_media_cache_key
+            and self._stream_media_cache_frames is not None
+        ):
+            self._last_media_cache_hit = True
+            self._dbg(f"[MEDIA CACHE HIT] frames={len(self._stream_media_cache_frames)}")
+            return self._stream_media_cache_frames
+
+        self._last_media_cache_hit = False
         images, videos, _ = messages.extract_media()
         if videos and images:
             raise ValueError(
@@ -332,6 +430,11 @@ class Stream3DVLM(lmms):
             f"[MEDIA TO FRAMES] extracted_images={len(images)} extracted_videos={len(videos)} "
             f"total_frames={len(frames)} kept_frames={len(kept)} sample_sizes={sample_sizes}"
         )
+        if self.stream_prefix_cache and media_cache_key is not None:
+            # OOS questions for a trajectory are adjacent, so one entry avoids
+            # repeated decoding without retaining the entire dataset in RAM.
+            self._stream_media_cache_key = media_cache_key
+            self._stream_media_cache_frames = kept
         return kept
 
     def _prompt_text(self, messages: ChatMessages) -> str:
@@ -386,6 +489,69 @@ class Stream3DVLM(lmms):
     def _frame_processor_inputs(self, text: str, frame: Image.Image) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         return self._frames_processor_inputs(text, [frame])
 
+    @staticmethod
+    def _frame_time_token(frame_idx: int) -> str:
+        seconds = float(frame_idx)
+        hh = int(seconds // 3600)
+        mm = int((seconds % 3600) // 60)
+        ss = seconds % 60
+        return f"<TIME {hh:02d}:{mm:02d}:{ss:04.1f} video 1>"
+
+    def _stream_image_text(self, frame_idx: int) -> str:
+        prefix = f"{self._frame_time_token(frame_idx)} " if self.stream_frame_timestamps else ""
+        return f"{prefix}<|vision_start|><|image_pad|><|vision_end|>"
+
+    def _prefix_chunk_text(self, frames: List[Image.Image], chunk_start: int, system: str) -> str:
+        """Build an official-order prefix chunk, including each frame's comma."""
+        if chunk_start > 0:
+            chunk_end = chunk_start + len(frames)
+            return "".join(f"{self._stream_image_text(frame_idx)}," for frame_idx in range(chunk_start, chunk_end))
+
+        content: List[Dict[str, Any]] = []
+        for frame_idx, frame in enumerate(frames):
+            if self.stream_frame_timestamps:
+                content.append({"type": "text", "text": self._frame_time_token(frame_idx)})
+            content.append({"type": "image", "image": frame})
+            content.append({"type": "text", "text": ","})
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        return text[: -len("<|im_end|>") - 1]
+
+    def _install_inference_optimizations(self) -> None:
+        """Install adapter-local optimizations that retain only consumed outputs."""
+        model_to_use = self.model.module if hasattr(self.model, "module") else self.model
+
+        # Every adapter call consumes only the final-token logits. Avoid the
+        # otherwise very large [sequence, vocabulary] projection for prefix chunks.
+        lm_head = getattr(model_to_use, "lm_head", None)
+        if lm_head is not None and not getattr(lm_head, "_stream3d_last_token_only", False):
+            original_forward = lm_head.forward
+
+            def _last_token_forward(hidden_states, *args, _original_forward=original_forward, **kwargs):
+                return _original_forward(hidden_states[:, -1:, :], *args, **kwargs)
+
+            lm_head.forward = _last_token_forward
+            lm_head._stream3d_last_token_only = True
+
+        # The fusion blocks discard attention weights. Suppressing them lets
+        # MultiheadAttention use the optimized SDPA inference implementation.
+        feature_fusion = getattr(model_to_use, "feature_fusion", None)
+        for block in getattr(feature_fusion, "cross_attn_blocks", []):
+            attention = getattr(block, "cross_attention", None)
+            if attention is None or getattr(attention, "_stream3d_no_weights", False):
+                continue
+            original_forward = attention.forward
+
+            def _no_weights_forward(*args, _original_forward=original_forward, **kwargs):
+                kwargs.setdefault("need_weights", False)
+                return _original_forward(*args, **kwargs)
+
+            attention.forward = _no_weights_forward
+            attention._stream3d_no_weights = True
+
     def _oos_num_images_before_query(self, doc: Optional[Dict[str, Any]], num_frames: int) -> int:
         if num_frames <= 1:
             return 0
@@ -404,7 +570,18 @@ class Stream3DVLM(lmms):
             return torch.multinomial(probs, num_samples=1)
         return torch.argmax(logits, dim=-1, keepdim=True)
 
+    def _chosen_decision_token(self, sampled_token_id: int, has_more_frames: bool) -> int:
+        # A terminal frame cannot be followed by another image. Always close
+        # the Stream3D frame sequence with its trained STOP delimiter rather
+        # than leaking an arbitrary sampled word into the user turn.
+        if not has_more_frames:
+            return self.frame_end_token_id
+        if self.stream_frame_policy == "all":
+            return self.frame_interval_token_id
+        return sampled_token_id
+
     def _generate(self, messages: ChatMessages, gen_kwargs: Dict[str, Any], doc: Optional[Dict[str, Any]] = None) -> Tuple[str, int, float]:
+        start = time.time()
         self._dbg("[FINAL PROTOCOL MESSAGES]")
         for msg_idx, msg in enumerate(messages.model_dump()["messages"]):
             content = msg.get("content", [])
@@ -412,13 +589,13 @@ class Stream3DVLM(lmms):
                 f"  [PROTO] idx={msg_idx} role={msg.get('role')} "
                 f"types={[c.get('type') for c in content]} {self._content_preview(content)}"
             )
-        frames = self._media_to_frames(messages)
+        media_cache_key = self._media_cache_key(messages) if self.stream_prefix_cache else None
+        frames = self._media_to_frames(messages, media_cache_key)
         prompt = self._prompt_text(messages)
         system = self._system_text(messages)
         self._dbg(f"[SYSTEM] {system}")
         self._dbg(f"[PROMPT] {prompt}")
         self._dbg(f"[GEN KWARGS RAW] {gen_kwargs}")
-        start = time.time()
         num_images_before_query = self._oos_num_images_before_query(doc, len(frames))
         self._dbg(
             f"[STREAM3D QUERY SPLIT] num_images_before_query={num_images_before_query} "
@@ -426,7 +603,24 @@ class Stream3DVLM(lmms):
             f"query_time_in_clip_sec={doc.get('query_time_in_clip_sec') if doc else None} "
             f"query_time_sec={doc.get('query_time_sec') if doc else None}"
         )
-        text, tokens = self._generate_streaming(frames, prompt, system, gen_kwargs, num_images_before_query)
+        prefix_cache_key = None
+        if self.stream_prefix_cache and media_cache_key is not None:
+            prefix_cache_key = (
+                self._prefix_frame_fingerprint(frames, num_images_before_query, media_cache_key),
+                system,
+                num_images_before_query,
+                self.stream_prompt_mode,
+                self.stream_frame_timestamps,
+                self.stream_prefix_chunk_size,
+            )
+        text, tokens = self._generate_streaming(
+            frames,
+            prompt,
+            system,
+            gen_kwargs,
+            num_images_before_query,
+            prefix_cache_key=prefix_cache_key,
+        )
         elapsed = time.time() - start
         self._dbg(
             f"[GENERATION METRICS] elapsed={elapsed:.4f}s output_tokens={tokens} "
@@ -444,6 +638,7 @@ class Stream3DVLM(lmms):
         system: str,
         gen_kwargs: Dict[str, Any],
         num_images_before_query: int = 0,
+        prefix_cache_key: Optional[Tuple[Any, ...]] = None,
     ) -> Tuple[str, int]:
         max_new_tokens = int(gen_kwargs.get("max_new_tokens") or self.default_max_new_tokens)
         model_to_use = self.model.module if hasattr(self.model, "module") else self.model
@@ -461,12 +656,30 @@ class Stream3DVLM(lmms):
             f"[STREAM3D GENERATION CONFIG] frames={len(frames)} max_new_tokens={max_new_tokens} "
             f"images_before={len(images_before)} images_after={len(images_after)} "
             f"prompt_mode={self.stream_prompt_mode} frame_policy={self.stream_frame_policy} "
+            f"prefix_chunk_size={self.stream_prefix_chunk_size} "
             f"temperature={self.temperature} use_geometry={self._should_use_geometry()} "
             f"model_class={type(model_to_use).__name__}"
         )
 
-        past_key_values = None
-        current_seq_len = 0
+        prefix_cache_hit = (
+            bool(images_before)
+            and prefix_cache_key is not None
+            and prefix_cache_key == self._stream_prefix_cache_key
+            and self._stream_prefix_cache_past is not None
+        )
+        self._last_prefix_cache_hit = prefix_cache_hit
+        if prefix_cache_hit:
+            past_key_values = self._stream_prefix_cache_past
+            current_seq_len = self._stream_prefix_cache_seq_len
+            self._dbg(f"[PREFIX KV CACHE HIT] seq_len={current_seq_len} frames={len(images_before)}")
+        else:
+            if prefix_cache_key is not None and prefix_cache_key != self._stream_prefix_cache_key:
+                # Release the previous trajectory's GPU KV tensors before
+                # constructing a different long prefix.
+                self._clear_stream_prefix_cache()
+            past_key_values = None
+            current_seq_len = 0
+        prefix_restore_len: Optional[int] = current_seq_len if prefix_cache_hit else None
 
         def _forward_inputs(inputs: Dict[str, torch.Tensor], geometry_inputs: Optional[torch.Tensor] = None) -> torch.Tensor:
             nonlocal past_key_values, current_seq_len
@@ -474,7 +687,7 @@ class Stream3DVLM(lmms):
             attention_mask = inputs["attention_mask"]
             cache_position = None
             if past_key_values is not None:
-                past_len = past_key_values[0][0].shape[-2]
+                past_len = past_key_values.get_seq_length()
                 past_mask = torch.ones(
                     (attention_mask.shape[0], past_len),
                     dtype=attention_mask.dtype,
@@ -483,7 +696,7 @@ class Stream3DVLM(lmms):
                 attention_mask = torch.cat([past_mask, attention_mask], dim=1)
                 cache_position = torch.arange(current_seq_len, current_seq_len + token_len, device=self.device)
 
-            with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                 outputs = model_to_use(
                     input_ids=inputs["input_ids"],
                     attention_mask=attention_mask,
@@ -493,6 +706,7 @@ class Stream3DVLM(lmms):
                     past_key_values=past_key_values,
                     cache_position=cache_position,
                     use_cache=True,
+                    logits_to_keep=1,
                 )
                 logits = outputs.logits[:, -1, :]
                 past_key_values = outputs.past_key_values
@@ -504,64 +718,55 @@ class Stream3DVLM(lmms):
             if not token_ids:
                 return
             token_tensor = torch.tensor([token_ids], dtype=torch.long, device=self.device)
-            with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                 outputs = model_to_use(
                     input_ids=token_tensor,
                     attention_mask=None,
                     past_key_values=past_key_values,
                     cache_position=torch.arange(current_seq_len, current_seq_len + token_tensor.shape[1], device=self.device),
                     use_cache=True,
+                    logits_to_keep=1,
                 )
                 past_key_values = outputs.past_key_values
             current_seq_len += token_tensor.shape[1]
 
-        def _chosen_decision_token(sampled_token_id: int, has_more_frames: bool) -> int:
-            if self.stream_frame_policy == "all":
-                return self.frame_interval_token_id if has_more_frames else self.frame_end_token_id
-            return sampled_token_id
-
-        def _frame_time_token(frame_idx: int) -> str:
-            seconds = float(frame_idx)
-            hh = int(seconds // 3600)
-            mm = int((seconds % 3600) // 60)
-            ss = seconds % 60
-            return f"<TIME {hh:02d}:{mm:02d}:{ss:04.1f} video 1>"
-
-        def _image_text(frame_idx: int) -> str:
-            prefix = f"{_frame_time_token(frame_idx)} " if self.stream_frame_timestamps else ""
-            return f"{prefix}<|vision_start|><|image_pad|><|vision_end|>"
-
         def _prompt_first_image_text(frame_idx: int) -> str:
             if self.stream_frame_timestamps:
-                return f"{prompt}\n{_frame_time_token(frame_idx)}"
+                return f"{prompt}\n{self._frame_time_token(frame_idx)}"
             return f"{prompt},"
 
-        if images_before:
-            first_content = []
-            if self.stream_frame_timestamps:
-                first_content.append({"type": "text", "text": _frame_time_token(0)})
-            first_content.append({"type": "image", "image": images_before[0]})
-            first_messages = [
-                {"role": "system", "content": system},
-                {"role": "user", "content": first_content},
-            ]
-            text = self.processor.apply_chat_template(first_messages, tokenize=False, add_generation_prompt=False)
-            text = text[: -len("<|im_end|>") - 1]
-            self._dbg(f"[PREFIX FRAME 0 TEMPLATE LEN] {len(text)} chars")
-            inputs, geometry_inputs = self._frame_processor_inputs(text, images_before[0])
-            self._dbg(f"[PREFIX FRAME PROCESSOR OUTPUT] frame_idx=0 {self._tensor_shape_summary(inputs)}")
-            _forward_inputs(inputs, geometry_inputs)
-            _forward_tokens([self.frame_interval_token_id])
+        if images_before and not prefix_cache_hit:
+            chunk_size = self.stream_prefix_chunk_size or len(images_before)
+            for chunk_start in range(0, len(images_before), chunk_size):
+                chunk_frames = images_before[chunk_start : chunk_start + chunk_size]
+                chunk_end = chunk_start + len(chunk_frames)
 
-            for frame_idx, frame in enumerate(images_before[1:], start=1):
-                frame_text = _image_text(frame_idx)
-                self._dbg(f"[PREFIX FRAME TEXT] frame_idx={frame_idx} text={frame_text!r}")
-                inputs, geometry_inputs = self._frame_processor_inputs(frame_text, frame)
-                self._dbg(f"[PREFIX FRAME PROCESSOR OUTPUT] frame_idx={frame_idx} {self._tensor_shape_summary(inputs)}")
+                text = self._prefix_chunk_text(chunk_frames, chunk_start, system)
+
+                self._dbg(
+                    f"[PREFIX CHUNK] frames={chunk_start}:{chunk_end} size={len(chunk_frames)} "
+                    f"text_len={len(text)}"
+                )
+                inputs, geometry_inputs = self._frames_processor_inputs(text, chunk_frames)
+                self._dbg(
+                    f"[PREFIX CHUNK PROCESSOR OUTPUT] frames={chunk_start}:{chunk_end} "
+                    f"{self._tensor_shape_summary(inputs)}"
+                )
                 _forward_inputs(inputs, geometry_inputs)
-                _forward_tokens([self.frame_interval_token_id])
 
-            query_text = f"{prompt}\n{_image_text(num_images_before_query)}" if self.stream_frame_timestamps else f"{prompt}<|vision_start|><|image_pad|><|vision_end|>"
+            if prefix_cache_key is not None and hasattr(past_key_values, "crop"):
+                self._stream_prefix_cache_key = prefix_cache_key
+                self._stream_prefix_cache_past = past_key_values
+                self._stream_prefix_cache_seq_len = current_seq_len
+                prefix_restore_len = current_seq_len
+                self._dbg(f"[PREFIX KV CACHE STORE] seq_len={current_seq_len} frames={len(images_before)}")
+
+        if images_before:
+            query_text = (
+                f"{prompt}\n{self._stream_image_text(num_images_before_query)}"
+                if self.stream_frame_timestamps
+                else f"{prompt}<|vision_start|><|image_pad|><|vision_end|>"
+            )
             inputs, geometry_inputs = self._frame_processor_inputs(query_text, first_image_after)
             self._dbg(f"[QUERY FRAME PROCESSOR OUTPUT] {self._tensor_shape_summary(inputs)}")
             logits = _forward_inputs(inputs, geometry_inputs)
@@ -586,7 +791,7 @@ class Stream3DVLM(lmms):
 
         next_token = self._sample_next_token(logits)
         sampled_token_id = next_token.item()
-        next_token_id = _chosen_decision_token(sampled_token_id, bool(remaining_images_after))
+        next_token_id = self._chosen_decision_token(sampled_token_id, bool(remaining_images_after))
         self._dbg(
             f"[FRAME DECISION] frame_idx=0 after_query_absolute_idx={num_images_before_query} "
             f"sampled_token_id={sampled_token_id} sampled_token={self.tokenizer.decode([sampled_token_id])!r} "
@@ -598,7 +803,7 @@ class Stream3DVLM(lmms):
         for frame_idx, frame in enumerate(remaining_images_after, start=1):
             if self.stream_frame_policy == "auto" and next_token_id != self.frame_interval_token_id:
                 break
-            frame_text = _image_text(num_images_before_query + frame_idx)
+            frame_text = self._stream_image_text(num_images_before_query + frame_idx)
             self._dbg(f"[FRAME TEXT] frame_idx={frame_idx} absolute_idx={num_images_before_query + frame_idx} text={frame_text!r}")
             inputs, geometry_inputs = self._frame_processor_inputs(frame_text, frame)
             self._dbg(
@@ -609,7 +814,7 @@ class Stream3DVLM(lmms):
             next_token = self._sample_next_token(logits)
             sampled_token_id = next_token.item()
             has_more_frames = frame_idx < len(remaining_images_after)
-            next_token_id = _chosen_decision_token(sampled_token_id, has_more_frames)
+            next_token_id = self._chosen_decision_token(sampled_token_id, has_more_frames)
             self._dbg(
                 f"[FRAME DECISION] frame_idx={frame_idx} after_query_absolute_idx={num_images_before_query + frame_idx} "
                 f"sampled_token_id={sampled_token_id} sampled_token={self.tokenizer.decode([sampled_token_id])!r} "
@@ -634,13 +839,14 @@ class Stream3DVLM(lmms):
             else:
                 last_token = next_token
                 cache_position = torch.tensor([current_seq_len], device=self.device)
-            with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                 out = model_to_use(
                     input_ids=last_token,
                     attention_mask=None,
                     past_key_values=past_key_values,
                     cache_position=cache_position,
                     use_cache=True,
+                    logits_to_keep=1,
                 )
                 next_token = self._sample_next_token(out.logits[:, -1, :])
                 past_key_values = out.past_key_values
@@ -654,6 +860,9 @@ class Stream3DVLM(lmms):
         self._dbg(f"[GENERATED TOKEN IDS] {generated_tokens}")
         text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True).strip()
         token_count = len(generated_tokens)
+        if prefix_restore_len is not None and self._stream_prefix_cache_past is not None:
+            self._stream_prefix_cache_past.crop(prefix_restore_len)
+            self._dbg(f"[PREFIX KV CACHE RESTORE] seq_len={prefix_restore_len}")
         past_key_values = None
         generated_tokens = None
         return text, token_count
@@ -724,10 +933,16 @@ class Stream3DVLM(lmms):
                 answer, tokens, elapsed = self._generate(messages, dict(all_gen_kwargs[0]), doc if task_name == "oos_videoqa" else None)
                 eval_logger.info(
                     f"Stream3D doc={doc.get('id', idx)} step={doc.get('step')} "
-                    f"tokens={tokens} speed={tokens / elapsed if elapsed > 0 else 0.0:.2f} tok/s"
+                    f"tokens={tokens} elapsed={elapsed:.3f}s "
+                    f"media_cache_hit={self._last_media_cache_hit} "
+                    f"prefix_cache_hit={self._last_prefix_cache_hit} "
+                    f"speed={tokens / elapsed if elapsed > 0 else 0.0:.2f} tok/s"
                 )
             except Exception as exc:
                 eval_logger.exception(f"Stream3D-VLM generation failed for doc={doc.get('id', idx)}: {exc}")
+                # A failed query may leave the mutable DynamicCache extended
+                # beyond the reusable prefix, so never reuse it.
+                self._clear_stream_prefix_cache()
                 if os.getenv("OOS_STRICT_ERRORS", "0") == "1":
                     raise
             finally:

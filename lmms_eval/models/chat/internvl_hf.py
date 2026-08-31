@@ -144,6 +144,34 @@ class InternVLHf(lmms):
             return value.strip().lower() in {"1", "true", "yes", "y"}
         return bool(value)
 
+    def _sample_video_frames(
+        self,
+        metadata,
+        num_frames: Optional[int] = None,
+        fps: Optional[float] = None,
+        **kwargs,
+    ) -> torch.LongTensor:
+        """Uniformly cap video frames while retaining both temporal endpoints."""
+        total_frames = int(metadata.total_num_frames)
+        if total_frames <= 0:
+            raise ValueError(f"Video must contain at least one frame, but got {total_frames}.")
+
+        if num_frames is None:
+            if fps is None:
+                num_frames = total_frames
+            else:
+                source_fps = getattr(metadata, "fps", None)
+                if source_fps is None or source_fps <= 0:
+                    raise ValueError("Video metadata with a positive fps is required for fps-based sampling.")
+                num_frames = max(1, int(total_frames / source_fps * fps))
+
+        frame_cap = int(num_frames)
+        if frame_cap <= 0:
+            raise ValueError(f"num_frames must be positive, but got {frame_cap}.")
+
+        sample_count = min(frame_cap, total_frames)
+        return torch.linspace(0, total_frames - 1, steps=sample_count).round().long()
+
     def _content_preview(self, content: List[Dict], max_text_chars: int = 2000) -> str:
         parts = []
         for item in content:
@@ -177,6 +205,7 @@ class InternVLHf(lmms):
         video_width: int = 448,
         video_height: int = 448,
         trust_remote_code: Optional[bool] = False,
+        local_files_only: bool = False,
         low_cpu_mem_usage: Optional[bool] = False,
         attn_implementation: Optional[str] = None,
         use_cache: bool = True,
@@ -221,6 +250,7 @@ class InternVLHf(lmms):
             "low_cpu_mem_usage": low_cpu_mem_usage,
             "attn_implementation": attn_implementation,
             "trust_remote_code": trust_remote_code,
+            "local_files_only": self._as_bool(local_files_only),
             "device_map": self.device_map,
         }
         model_kwargs = {key: value for key, value in model_kwargs.items() if value is not None}
@@ -261,6 +291,7 @@ class InternVLHf(lmms):
                 self.path,
                 revision=revision,
                 trust_remote_code=trust_remote_code,
+                local_files_only=self._as_bool(local_files_only),
                 use_fast=False,
             )
         else:
@@ -268,7 +299,12 @@ class InternVLHf(lmms):
                 self.path,
                 revision=revision,
                 trust_remote_code=trust_remote_code,
+                local_files_only=self._as_bool(local_files_only),
             )
+            # Transformers' default InternVL sampler errors when num_frames is
+            # larger than a short video and does not guarantee the last frame.
+            # Override only this processor instance with the capped sampler.
+            self.processor.video_processor.sample_frames = self._sample_video_frames
             self._tokenizer = getattr(self.processor, "tokenizer", self.processor)
         self.use_cache = use_cache
 

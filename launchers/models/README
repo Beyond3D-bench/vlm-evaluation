@@ -2,14 +2,14 @@
 
 ### Backbone / Traditional Models
 
-- [x] LLaVA
+- [x] LLaVA only old cluster and not needed
 - [x] Qwen
 - [x] InternVL
 - [x] Phi-4-multimodal
 
 ### Spatial / 3D-Aware Models
 
-- [x] VLM3R 2025, CVPR 2026
+- [x] VLM3R 2025, CVPR 2026 only old cluster
 - [x] Cambrian-P 21 May 2026
 - [x] Spatial-MLLM 2025 arXiv:2505.23747
 - [x] SenseNova-SI 2025 (`SenseNova-SI-1.5-InternVL3-8B` and `SenseNova-SI-1.3-Qwen3-VL-8B`)
@@ -19,7 +19,7 @@
 
 ### (Not Really relevant in our case) Streaming / Online Models
 
-- [x] Stream3D
+- [x] Stream3D only old cluster
 - [ ] ~~Flash-VStream 2025~~
 - [ ] ~~Dispider 2025~~
 - [ ] ~~VideoChat-Online 2025 https://arxiv.org/abs/2501.00584~~

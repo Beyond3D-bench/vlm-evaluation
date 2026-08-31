@@ -55,6 +55,7 @@ from lmms_eval.api.instance import GenerationResult, Instance, TokenCounts
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.model_utils.gen_metrics import log_metrics
+from lmms_eval.models.model_utils.vlm_3r_media import MediaItem, extract_ordered_media_and_turns
 
 try:
     from llava.constants import (
@@ -103,13 +104,14 @@ class VLM3R(lmms):
         mm_newline_position: str = "grid",
         load_8bit: bool = False,
         load_4bit: bool = False,
+        low_cpu_mem_usage: bool = True,
         attn_implementation: str = "flash_attention_2",
         torch_dtype: str = "float16",
         max_new_tokens: int = 1024,
         temperature: float = 0.0,
         top_p: float = 0.1,
         num_beams: int = 1,
-        disable_cudnn: bool = True,
+        disable_cudnn: bool = False,
         system_prompt: str = "",
         add_time_instruction: bool = False,
         export_point_cloud: bool = False,
@@ -134,6 +136,7 @@ class VLM3R(lmms):
         self.mm_newline_position = mm_newline_position
         self.mm_resampler_location = mm_pooling_position
         self.delay_load = self._as_bool(delay_load)
+        self.low_cpu_mem_usage = self._as_bool(low_cpu_mem_usage)
         self.default_max_new_tokens = int(max_new_tokens)
         self.default_temperature = float(temperature)
         self.default_top_p = float(top_p)
@@ -152,7 +155,10 @@ class VLM3R(lmms):
             torch.backends.cudnn.benchmark = False
             torch.backends.cudnn.allow_tf32 = False
             torch.backends.cuda.matmul.allow_tf32 = False
-            eval_logger.warning("VLM-3R disabled cuDNN to avoid GB10 cuDNN sublibrary mismatch.")
+            eval_logger.warning("VLM-3R cuDNN was explicitly disabled by disable_cudnn=True.")
+        else:
+            torch.backends.cudnn.enabled = True
+            eval_logger.info(f"VLM-3R cuDNN enabled (version={torch.backends.cudnn.version()}).")
 
         self.accelerator = Accelerator()
         if self.accelerator.num_processes > 1:
@@ -177,12 +183,15 @@ class VLM3R(lmms):
         }
 
         self.cfg_pretrained = AutoConfig.from_pretrained(pretrained)
+        load_8bit_enabled = self._as_bool(load_8bit)
+        load_4bit_enabled = self._as_bool(load_4bit)
         self._tokenizer, self._model, self.image_processor, self.context_len = load_pretrained_model(
             pretrained,
             model_base,
             model_name,
-            load_8bit=self._as_bool(load_8bit),
-            load_4bit=self._as_bool(load_4bit),
+            load_8bit=load_8bit_enabled,
+            load_4bit=load_4bit_enabled,
+            low_cpu_mem_usage=self.low_cpu_mem_usage,
             device_map=self.device_map,
             torch_dtype=torch_dtype,
             attn_implementation=attn_implementation,
@@ -190,7 +199,21 @@ class VLM3R(lmms):
         )
         self._model.eval()
         if getattr(self._model, "hf_device_map", None) is None:
-            self._model.to(self._device)
+            if load_8bit_enabled or load_4bit_enabled:
+                self._model.to(self._device)
+            else:
+                dtype_by_name = {
+                    "float16": torch.float16,
+                    "bfloat16": torch.bfloat16,
+                }
+                target_dtype = torch_dtype if isinstance(torch_dtype, torch.dtype) else dtype_by_name.get(str(torch_dtype).lower())
+                if target_dtype is None:
+                    raise ValueError(f"Unsupported VLM-3R torch_dtype: {torch_dtype}")
+                # assign=True in the low-memory loader preserves checkpoint
+                # dtypes. Apply the requested inference dtype uniformly so the
+                # vision, spatial, and fusion modules agree at runtime.
+                self._model.to(device=self._device, dtype=target_dtype)
+                eval_logger.info(f"VLM-3R moved to {self._device} with dtype={target_dtype}.")
 
         if self._tokenizer.pad_token_id is None and "qwen" in getattr(self._tokenizer, "name_or_path", "").lower():
             self._tokenizer.pad_token_id = 151643
@@ -377,67 +400,67 @@ class VLM3R(lmms):
                 visual_content.append({"type": "image", "url": visual})
         return visual_content
 
-    def _extract_media_and_prompt(self, messages: List[Dict[str, Any]]) -> Tuple[List[str], List[str], List[Tuple[str, str]], str]:
-        videos: List[str] = []
-        images: List[str] = []
-        system_lines: List[str] = []
-        turns: List[Tuple[str, str]] = []
-
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", [])
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                ctype = part.get("type")
-                url = part.get("url", part.get("video", part.get("image")))
-                if ctype == "video" and url:
-                    videos.append(str(url))
-                elif ctype == "image" and url:
-                    images.append(str(url))
-
-            text = self._text_from_content(content)
-            if not text:
-                continue
-            if role == "system":
-                system_lines.append(text)
-            elif role in {"user", "assistant"}:
-                turns.append((role, text))
-
-        system_prompt = "\n\n".join(system_lines).strip()
-        return videos, images, turns, system_prompt
-
-    def _prepare_generation_inputs(self, videos: List[str], images: List[str], question: Any, system_prompt: str = ""):
-        tensors = []
-        modalities: Any = None
-        time_instruction = ""
-        if videos:
-            video, frame_time, video_time = self._load_video(videos[0])
-            if self.add_time_instruction:
-                time_instruction = (
-                    f"The video lasts for {video_time:.2f} seconds, and {len(video)} frames "
-                    f"are uniformly sampled from it. These frames are located at {frame_time}. "
-                    "Please answer the following questions related to this video."
-                )
-            video_tensor = self.image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().to(self.device)
-            tensors.append(video_tensor)
-            modalities = ["video" for _ in tensors]
-        elif images:
-            pil_images = [Image.open(path).convert("RGB") for path in images]
-            image_tensor = self.image_processor.preprocess(pil_images, return_tensors="pt")["pixel_values"]
-            tensors.extend([img.half().to(self.device) for img in image_tensor])
-            modalities = ["image"] * len(tensors)
-
+    def _visual_token(self) -> str:
         if self.model.config.mm_use_im_start_end:
-            visual_token = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-        else:
-            visual_token = DEFAULT_IMAGE_TOKEN
-        has_media = bool(videos or images)
+            return DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
+        return DEFAULT_IMAGE_TOKEN
+
+    def _extract_media_and_prompt(self, messages: List[Dict[str, Any]]) -> Tuple[List[MediaItem], List[Tuple[str, str]], str]:
+        """Extract ordered media and keep matching visual tokens in each turn."""
+        return extract_ordered_media_and_turns(messages, self._visual_token())
+
+    def _prepare_generation_inputs(self, media: List[MediaItem], question: Any, system_prompt: str = ""):
+        tensors: List[torch.Tensor] = []
+        modalities: List[str] = []
+        time_instruction = ""
+        video_count = sum(modality == "video" for modality, _ in media)
+        if video_count > 1:
+            raise NotImplementedError(f"VLM-3R inference supports one video per request, got {video_count}.")
+
+        for modality, path in media:
+            if modality == "video":
+                video, frame_time, video_time = self._load_video(path)
+                if self.add_time_instruction:
+                    time_instruction = (
+                        f"The video lasts for {video_time:.2f} seconds, and {len(video)} frames "
+                        f"are uniformly sampled from it. These frames are located at {frame_time}. "
+                        "Please answer the following questions related to this video."
+                    )
+                tensor = self.image_processor.preprocess(video, return_tensors="pt")["pixel_values"]
+                tensors.append(tensor.half().to(self.device))
+                modalities.append("video")
+            elif modality == "image":
+                with Image.open(path) as image:
+                    pil_image = image.convert("RGB")
+                tensor = self.image_processor.preprocess([pil_image], return_tensors="pt")["pixel_values"]
+                if tensor.shape[0] != 1:
+                    raise ValueError(f"Expected one processed image for {path}, got shape {tuple(tensor.shape)}.")
+                tensors.append(tensor[0].half().to(self.device))
+                modalities.append("image")
+            else:
+                raise ValueError(f"Unsupported VLM-3R modality: {modality!r}")
+
+        has_media = bool(media)
 
         if isinstance(question, list):
             turns = [(role, text) for role, text in question if text]
         else:
             turns = [("user", str(question))]
+
+        visual_token = self._visual_token()
+        visual_token_count = sum(text.count(DEFAULT_IMAGE_TOKEN) for _, text in turns)
+        if has_media and visual_token_count == 0:
+            for turn_idx, (role, text) in enumerate(turns):
+                if role == "user":
+                    prefix = "\n".join([visual_token] * len(media))
+                    turns[turn_idx] = (role, f"{prefix}\n{text}")
+                    visual_token_count = len(media)
+                    break
+        if visual_token_count != len(tensors):
+            raise ValueError(
+                "VLM-3R visual token/media mismatch: "
+                f"prompt has {visual_token_count} visual tokens but {len(tensors)} media tensors."
+            )
 
         conv = conv_templates[self.conv_mode].copy()
         if system_prompt:
@@ -445,21 +468,15 @@ class VLM3R(lmms):
                 conv.system = f"<|im_start|>system\n{system_prompt}"
             else:
                 conv.system = system_prompt
-        visual_added = False
         time_instruction_added = False
         for role, text in turns:
             conv_role = conv.roles[1] if role == "assistant" else conv.roles[0]
             msg_text = text
             if role == "user":
-                if time_instruction and not time_instruction_added:
+                if time_instruction and not time_instruction_added and DEFAULT_IMAGE_TOKEN in msg_text:
                     msg_text = f"{time_instruction}\n{msg_text}"
                     time_instruction_added = True
-                if has_media and not visual_added:
-                    msg_text = f"{visual_token}\n{msg_text}"
-                    visual_added = True
             conv.append_message(conv_role, msg_text)
-        if has_media and not visual_added:
-            conv.append_message(conv.roles[0], visual_token)
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
 
@@ -545,12 +562,15 @@ class VLM3R(lmms):
                     non_system = [m for m in messages if m.get("role") != "system"]
                     messages = system_msgs + generated_history + non_system
 
-            videos, images, question, system_prompt = self._extract_media_and_prompt(messages)
+            media, question, system_prompt = self._extract_media_and_prompt(messages)
             input_ids, attention_mask, visual_tensors, modalities, stop_str, stopping_criteria, prompt = self._prepare_generation_inputs(
-                videos,
-                images,
+                media,
                 question or str(ctx),
                 system_prompt,
+            )
+            self._dbg(
+                f"[VLM-3R MEDIA] ordered_media={media} modalities={modalities} "
+                f"tensor_shapes={[tuple(tensor.shape) for tensor in visual_tensors]}"
             )
 
             request_gen_kwargs = dict(gen_kwargs or {})

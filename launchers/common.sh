@@ -84,12 +84,62 @@ load_oos_model_preset() {
   source "$preset_file"
 }
 
+set_model_arg() {
+  local target_key="$1"
+  local target_value="$2"
+  local item key
+  local -a current_args updated_args
+  local found=0
+
+  IFS=',' read -r -a current_args <<< "$MODEL_ARGS"
+  for item in "${current_args[@]}"; do
+    key="${item%%=*}"
+    if [ "$key" = "$target_key" ]; then
+      updated_args+=("${target_key}=${target_value}")
+      found=1
+    else
+      updated_args+=("$item")
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    updated_args+=("${target_key}=${target_value}")
+  fi
+  MODEL_ARGS="$(IFS=','; echo "${updated_args[*]}")"
+}
+
+get_model_arg() {
+  local target_key="$1"
+  local item key
+  local -a current_args
+
+  IFS=',' read -r -a current_args <<< "$MODEL_ARGS"
+  for item in "${current_args[@]}"; do
+    key="${item%%=*}"
+    if [ "$key" = "$target_key" ]; then
+      printf '%s\n' "${item#*=}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 stage_hf_model_to_node_tmp() {
   if [ "${OOS_STAGE_MODEL_TO_TMP:-0}" != "1" ]; then
     return
   fi
 
   local local_model_dir="${OOS_STAGE_MODEL_DIR:-}"
+  local model_id="${OOS_STAGE_MODEL_ID:-}"
+  if [ -z "$local_model_dir" ] && [ -z "$model_id" ]; then
+    local pretrained
+    pretrained="$(get_model_arg pretrained || true)"
+    if [ -d "$pretrained" ]; then
+      local_model_dir="$pretrained"
+    elif [ -n "$pretrained" ]; then
+      model_id="$pretrained"
+    fi
+  fi
+
   if [ -n "$local_model_dir" ]; then
     if [ ! -d "$local_model_dir" ]; then
       echo "OOS_STAGE_MODEL_DIR does not exist: $local_model_dir" >&2
@@ -112,19 +162,29 @@ stage_hf_model_to_node_tmp() {
       echo "Using already staged local model: $dst"
     fi
 
-    MODEL_ARGS="${MODEL_ARGS/pretrained=$local_model_dir/pretrained=$dst}"
+    # Some checkpoints bundle their remote-code modules but retain auto_map
+    # entries pointing to a Hub repository. Make those references local so
+    # compute nodes can load the staged checkpoint without internet access.
+    python "$LAUNCHER_DIR/prepare_staged_hf_config.py" "$dst/config.json"
+
+    set_model_arg pretrained "$dst"
     export OOS_STAGED_MODEL_PATH="$dst"
     return
   fi
 
-  local model_id="${OOS_STAGE_MODEL_ID:-}"
   if [ -z "$model_id" ]; then
-    echo "OOS_STAGE_MODEL_TO_TMP=1 requires OOS_STAGE_MODEL_ID or OOS_STAGE_MODEL_DIR." >&2
+    echo "OOS_STAGE_MODEL_TO_TMP=1 requires a pretrained model argument, OOS_STAGE_MODEL_ID, or OOS_STAGE_MODEL_DIR." >&2
     exit 1
   fi
 
   local cache_name="models--${model_id//\//--}"
-  local cache_dir="$HF_HOME/$cache_name"
+  local hub_cache="${HF_HUB_CACHE:-$HF_HOME/hub}"
+  local cache_dir="$hub_cache/$cache_name"
+  # Keep compatibility with caches created directly under HF_HOME by older
+  # Hugging Face versions or explicit --cache-dir usage.
+  if [ ! -d "$cache_dir" ] && [ -d "$HF_HOME/$cache_name" ]; then
+    cache_dir="$HF_HOME/$cache_name"
+  fi
   local ref="${OOS_STAGE_MODEL_REF:-main}"
   local snapshot_id=""
   if [ -f "$cache_dir/refs/$ref" ]; then
@@ -154,7 +214,7 @@ stage_hf_model_to_node_tmp() {
     echo "Using already staged model snapshot: $dst"
   fi
 
-  MODEL_ARGS="${MODEL_ARGS/pretrained=$model_id/pretrained=$dst}"
+  set_model_arg pretrained "$dst"
   export OOS_STAGED_MODEL_PATH="$dst"
 }
 
@@ -164,14 +224,19 @@ print_oos_run_summary() {
   echo "lmms-eval model: $MODEL"
   echo "Model args: $MODEL_ARGS"
   echo "Task: ${TASK_NAME:-oos_videoqa}"
+  echo "Dataset JSONL: ${OOS_DATASET_JSONL:-unset}"
   echo "Output: $OUTPUT_PATH"
   echo "Env file: ${OOS_ENV_FILE:-launchers/oos_env.sh}"
   echo "Repo .env present: $([ -f "$REPO_DIR/.env" ] && echo yes || echo no)"
   echo "HF_TOKEN set: $([ -n "${HF_TOKEN:-}" ] && echo yes || echo no)"
   echo "HF_HOME: $HF_HOME"
+  echo "HF_HUB_CACHE: ${HF_HUB_CACHE:-$HF_HOME/hub}"
   echo "HF_DATASETS_CACHE: $HF_DATASETS_CACHE"
   echo "LMMS_EVAL_CACHE: $LMMS_EVAL_CACHE"
   echo "TMPDIR: $TMPDIR"
+  echo "OOS_STAGE_MODEL_TO_TMP: ${OOS_STAGE_MODEL_TO_TMP:-0}"
+  echo "OOS_STAGE_MODEL_DIR: ${OOS_STAGE_MODEL_DIR:-unset}"
+  echo "OOS_STAGE_MODEL_ID: ${OOS_STAGE_MODEL_ID:-unset}"
   echo "OOS_STAGED_MODEL_PATH: ${OOS_STAGED_MODEL_PATH:-unset}"
   echo "FFMPEG_PATH: ${FFMPEG_PATH:-unset}"
   python --version

@@ -29,9 +29,16 @@ if not _has_qwen_vl:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
 
 
-def _prepare_spatial_mllm_inputs(batch, video_inputs, image_inputs):
+def _prepare_spatial_mllm_inputs(batch, video_inputs, image_inputs, image_temporal_patch_size=2):
     video_tchw = []
     image_tchw = []
+
+    image_temporal_patch_size = int(image_temporal_patch_size)
+    if image_temporal_patch_size <= 0:
+        raise ValueError(
+            "Spatial-MLLM image temporal patch size must be positive, "
+            f"got {image_temporal_patch_size}"
+        )
 
     if video_inputs:
         for video_input in video_inputs:
@@ -41,14 +48,25 @@ def _prepare_spatial_mllm_inputs(batch, video_inputs, image_inputs):
                 video_input = torch.stack([torch.tensor(np.array(img)).permute(2, 0, 1) for img in video_input]).float() / 255.0
             else:
                 raise ValueError(f"Unsupported Spatial-MLLM video input format: {type(video_input)}")
+            if video_input.ndim != 4:
+                raise ValueError(
+                    "Spatial-MLLM video tensors must have shape (T, C, H, W), "
+                    f"got {tuple(video_input.shape)}"
+                )
             video_tchw.append(video_input)
 
     if image_inputs:
         for image_input in image_inputs:
             if isinstance(image_input, Image.Image):
-                image_input = torch.tensor(np.array(image_input)).permute(2, 0, 1).float() / 255.0
+                image_input = torch.tensor(np.array(image_input)).permute(2, 0, 1).unsqueeze(0)
+                image_input = image_input.repeat(image_temporal_patch_size, 1, 1, 1).float() / 255.0
             else:
                 raise ValueError(f"Unsupported Spatial-MLLM image input format: {type(image_input)}")
+            if image_input.ndim != 4:
+                raise ValueError(
+                    "Spatial-MLLM image tensors must have shape (T, C, H, W), "
+                    f"got {tuple(image_input.shape)}"
+                )
             image_tchw.append(image_input)
 
     batch.update(
@@ -58,6 +76,18 @@ def _prepare_spatial_mllm_inputs(batch, video_inputs, image_inputs):
         }
     )
     return batch
+
+
+def _keep_last_token_for_lm_head(_module, args):
+    """Avoid materializing prompt-position logits during autoregressive generation."""
+    if not args:
+        return None
+
+    hidden_states = args[0]
+    if not isinstance(hidden_states, torch.Tensor) or hidden_states.ndim < 3 or hidden_states.shape[-2] <= 1:
+        return None
+
+    return (hidden_states[..., -1:, :], *args[1:])
 
 
 @register_model("spatial_mllm_chat")
@@ -77,6 +107,9 @@ class SpatialMLLM(lmms):
         max_pixels: int = 1605632,
         max_num_frames: int = 16,
         fps: Optional[float] = None,
+        video_resolution: Optional[int] = 448,
+        use_fast: bool = False,
+        last_token_logits_only: bool = True,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -85,6 +118,8 @@ class SpatialMLLM(lmms):
         valid_attn_implementations = [None, "flash_attention_2", "sdpa", "eager"]
         if attn_implementation not in valid_attn_implementations:
             raise ValueError(f"attn_implementation must be one of {valid_attn_implementations}, got {attn_implementation}")
+        if video_resolution is not None and (video_resolution <= 0 or video_resolution % 28 != 0):
+            raise ValueError(f"video_resolution must be a positive multiple of 28, got {video_resolution}")
 
         repo_path = spatial_mllm_repo or os.environ.get("SPATIAL_MLLM_REPO")
         if repo_path:
@@ -119,13 +154,15 @@ class SpatialMLLM(lmms):
             model_kwargs["attn_implementation"] = attn_implementation
 
         self._model = SpatialMLLMForConditionalGeneration.from_pretrained(pretrained, **model_kwargs).eval()
-        self.processor = Qwen2_5_VLProcessor.from_pretrained(pretrained, max_pixels=max_pixels, min_pixels=min_pixels)
+        self.processor = Qwen2_5_VLProcessor.from_pretrained(pretrained, max_pixels=max_pixels, min_pixels=min_pixels, use_fast=use_fast)
         self._tokenizer = AutoTokenizer.from_pretrained(pretrained)
 
         self.max_pixels = max_pixels
         self.min_pixels = min_pixels
         self.max_num_frames = max_num_frames
         self.fps = fps
+        self.video_resolution = video_resolution
+        self.last_token_logits_only = last_token_logits_only
         self._config = self.model.config
         self._max_length = 2048
         self.batch_size_per_gpu = int(batch_size)
@@ -232,12 +269,19 @@ class SpatialMLLM(lmms):
             print(f"[SpatialMLLM][{header}] text:\n{text}", flush=True)
 
     def _video_kwargs(self, videos):
-        video_kwargs = {
-            "max_pixels": self.max_pixels,
-            "min_pixels": self.min_pixels,
-        }
+        if self.video_resolution is not None:
+            video_kwargs = {
+                "resized_height": self.video_resolution,
+                "resized_width": self.video_resolution,
+            }
+        else:
+            video_kwargs = {
+                "max_pixels": self.max_pixels,
+                "min_pixels": self.min_pixels,
+            }
         if self.fps is not None:
             video_kwargs["fps"] = self.fps
+            video_kwargs["max_frames"] = self.max_num_frames
         elif videos and decord is not None:
             try:
                 video_total_frames = len(decord.VideoReader(videos[0]))
@@ -306,7 +350,12 @@ class SpatialMLLM(lmms):
                 padding_side="left",
                 return_tensors="pt",
             )
-            inputs = _prepare_spatial_mllm_inputs(inputs, video_inputs, image_inputs)
+            inputs = _prepare_spatial_mllm_inputs(
+                inputs,
+                video_inputs,
+                image_inputs,
+                image_temporal_patch_size=self.config.vision_config.temporal_patch_size,
+            )
 
             inputs = inputs.to("cuda" if self.device_map == "auto" else self.device)
             if inputs.get("image_tchw") is not None:
@@ -327,18 +376,28 @@ class SpatialMLLM(lmms):
             top_p = current_gen_kwargs["top_p"] if do_sample else None
 
             start_time = time.time()
-            with torch.no_grad():
-                cont = self.model.generate(
-                    **inputs,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    do_sample=do_sample,
-                    temperature=temperature,
-                    top_p=top_p,
-                    num_beams=current_gen_kwargs["num_beams"],
-                    max_new_tokens=current_gen_kwargs["max_new_tokens"],
-                    use_cache=self.use_cache,
-                )
+            lm_head_hook = None
+            if self.last_token_logits_only:
+                # Spatial-MLLM's custom forward predates Transformers' logits_to_keep
+                # support and otherwise projects every prompt token over the full
+                # vocabulary. Generation only consumes the final-position logits.
+                lm_head_hook = self.model.lm_head.register_forward_pre_hook(_keep_last_token_for_lm_head)
+            try:
+                with torch.no_grad():
+                    cont = self.model.generate(
+                        **inputs,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        do_sample=do_sample,
+                        temperature=temperature,
+                        top_p=top_p,
+                        num_beams=current_gen_kwargs["num_beams"],
+                        max_new_tokens=current_gen_kwargs["max_new_tokens"],
+                        use_cache=self.use_cache,
+                    )
+            finally:
+                if lm_head_hook is not None:
+                    lm_head_hook.remove()
             end_time = time.time()
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]

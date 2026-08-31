@@ -66,6 +66,24 @@ def _expand_cache_path(path: str) -> str:
     return os.path.expanduser(os.path.expandvars(path))
 
 
+def _expand_dataset_data_files(value):
+    """Expand environment variables in dataset_kwargs.data_files paths."""
+    if isinstance(value, str):
+        expanded = os.path.expanduser(os.path.expandvars(value))
+        if re.search(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)", expanded):
+            raise ValueError(
+                f"Unresolved environment variable in dataset data_files path: {value!r}"
+            )
+        return expanded
+    if isinstance(value, dict):
+        return {key: _expand_dataset_data_files(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_dataset_data_files(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_expand_dataset_data_files(item) for item in value)
+    return value
+
+
 @lru_cache(maxsize=1)
 def _resolve_hf_datasets_cache_dir() -> str:
     """Pick a datasets cache directory that is safe for file locks."""
@@ -155,6 +173,12 @@ class TaskConfig(dict):
     reasoning_tags: Union[str, list] = None
 
     def __post_init__(self) -> None:
+        if self.dataset_kwargs and "data_files" in self.dataset_kwargs:
+            self.dataset_kwargs = dict(self.dataset_kwargs)
+            self.dataset_kwargs["data_files"] = _expand_dataset_data_files(
+                self.dataset_kwargs["data_files"]
+            )
+
         if self.dataset_path and os.path.exists(os.path.dirname(self.dataset_path)):
             pass
 

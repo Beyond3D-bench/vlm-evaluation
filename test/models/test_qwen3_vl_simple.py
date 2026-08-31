@@ -81,6 +81,8 @@ class TestQwen3VLSimple(unittest.TestCase):
         model.fps = None
         model.system_prompt = "You are a helpful assistant."
         model.interleave_visuals = False
+        model.enable_thinking = True
+        model.preserve_reasoning = False
         model.reasoning_prompt = None
         model.batch_size_per_gpu = 1
         model.use_cache = False
@@ -91,6 +93,15 @@ class TestQwen3VLSimple(unittest.TestCase):
         model.task_dict = {"demo_task": {"test": [{"id": 0}]}}
         model.cache_hook = types.SimpleNamespace(add_partial=lambda *args, **kwargs: None)
         return model
+
+    def test_preserve_reasoning_is_opt_in(self):
+        model = self._make_model()
+        raw_answer = "<think>reasoning</think>\nB"
+
+        self.assertEqual(model._answer_for_return(raw_answer), "B")
+
+        model.preserve_reasoning = True
+        self.assertEqual(model._answer_for_return(raw_answer), raw_answer)
 
     def test_generate_until_passes_video_metadata_and_kwargs_to_processor(self):
         model = self._make_model(max_num_frames=3)

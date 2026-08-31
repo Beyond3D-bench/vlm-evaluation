@@ -26,10 +26,15 @@ OOS_STEP23_EVAL_MODE = os.getenv("OOS_STEP23_EVAL_MODE", "time_point").strip().l
 
 OOS_VIDEO_CONTEXT = os.getenv("OOS_VIDEO_CONTEXT", "prefix").strip().lower()
 OOS_FULL_VIDEO_CONTEXT_VALUES = {"full", "entire", "all"}
+OOS_LAST_FRAME_CONTEXT_VALUES = {"last_frame", "last-frame"}
 
 
 def _use_full_video_context() -> bool:
     return OOS_VIDEO_CONTEXT in OOS_FULL_VIDEO_CONTEXT_VALUES
+
+
+def _use_last_frame_context() -> bool:
+    return OOS_VIDEO_CONTEXT in OOS_LAST_FRAME_CONTEXT_VALUES
 
 
 def _step23_time_only_eval() -> bool:
@@ -315,8 +320,12 @@ def _is_step1_query_frame_debug(doc: Dict[str, Any]) -> bool:
 
     return step_id == "1" or qclass == "oos_step1_visibility"
 
-def _extract_query_frame_image(full_video_path: str, query_time: float) -> str:
-    """Extract exactly one image frame at query_time for step-1 visibility debugging."""
+def _extract_query_frame_image(
+    full_video_path: str,
+    query_time: float,
+    marker_xy_norm: Optional[Tuple[float, float]] = None,
+) -> str:
+    """Extract one image at query_time, optionally marking a normalized point."""
     if not os.path.exists(full_video_path):
         raise FileNotFoundError(f"Full video path does not exist: {full_video_path}")
     if query_time < 0:
@@ -329,10 +338,34 @@ def _extract_query_frame_image(full_video_path: str, query_time: float) -> str:
     if os.getenv("OOS_STEP1_FRAME_KEEP_SIZE", "0") != "1" and resize_w and resize_h:
         vf_parts.append(f"scale={resize_w}:{resize_h}")
 
+    marker_cache_key = "none"
+    if marker_xy_norm is not None:
+        x_norm, y_norm = marker_xy_norm
+        if not (0.0 <= x_norm <= 1.0 and 0.0 <= y_norm <= 1.0):
+            raise ValueError(f"Invalid normalized marker coordinates: {marker_xy_norm}")
+
+        marker_size = max(1, int(os.getenv("OOS_MARKER_SIZE_PX", "8")))
+        half = marker_size // 2
+        # Use the final frame dimensions so normalized marker coordinates stay
+        # aligned whether or not the extracted image is resized.
+        marker_x = (
+            f"max(0\\,min(iw-{marker_size}\\,{float(x_norm):.8f}*iw-{half}))"
+        )
+        marker_y = (
+            f"max(0\\,min(ih-{marker_size}\\,{float(y_norm):.8f}*ih-{half}))"
+        )
+        vf_parts.append(
+            f"drawbox=x={marker_x}:y={marker_y}:w={marker_size}:h={marker_size}:"
+            "color=red@0.95:t=fill"
+        )
+        marker_cache_key = (
+            f"x={float(x_norm):.8f}|y={float(y_norm):.8f}|size={marker_size}"
+        )
+
     cache_dir = _stable_cache_dir()
     config_key = (
         f"query_frame|src={canonical_video_path}|t={float(query_time):.3f}|"
-        f"vf={','.join(vf_parts)}"
+        f"vf={','.join(vf_parts)}|marker={marker_cache_key}"
     )
     output_path = os.path.join(
         cache_dir,
@@ -388,10 +421,14 @@ def _extract_marked_prefix_video(
     end_time: float,
     marker_xy_norm: Tuple[float, float],
     marker_label: Optional[str] = None,
+    *,
+    preserve_full_video: bool = False,
+    marker_time: Optional[float] = None,
 ) -> str:
     """
-    Extract video prefix from 0 to end_time and draw a small point marker
-    only on the query-time frame.
+    Draw a small point marker only on the query-time frame. By default the
+    output is the prefix from 0 to end_time; preserve_full_video keeps the
+    complete source duration instead.
 
     marker_xy_norm is normalized coordinate: (x_norm, y_norm), each in [0, 1].
     """
@@ -433,16 +470,24 @@ def _extract_marked_prefix_video(
     fps = float(os.getenv("OOS_TARGET_FPS", "1"))
     frame_window = 1.0 / max(fps, 1e-6)
 
-    start_t = max(0.0, float(end_time) - frame_window)
-    end_t = float(end_time)
+    output_end_t = float(end_time)
+    start_t = (
+        max(0.0, float(marker_time))
+        if marker_time is not None
+        else max(0.0, output_end_t - frame_window)
+    )
+    marker_end_t = start_t + frame_window
 
-    enable_expr = f"between(t,{start_t:.3f},{end_t:.3f})"
+    # Use a half-open interval so full-context videos do not also mark the
+    # first frame after the query frame (FFmpeg's between() is inclusive).
+    enable_expr = f"gte(t,{start_t:.3f})*lt(t,{marker_end_t:.3f})"
 
     # Include marker settings in cache key so changing size/fps creates a new cached file.
     config_key = (
-        f"marked_prefix|src={canonical_video_path}|end={end_t:.3f}|"
+        f"marked_video|src={canonical_video_path}|mode={'full' if preserve_full_video else 'prefix'}|"
+        f"output_end={output_end_t:.3f}|"
         f"x={x:.2f}|y={y:.2f}|size={marker_size}|"
-        f"start={start_t:.3f}|end={end_t:.3f}|point_marker_only=1"
+        f"start={start_t:.3f}|end={marker_end_t:.3f}|point_marker_only=2"
     )
 
     cache_dir = _stable_cache_dir()
@@ -467,17 +512,12 @@ def _extract_marked_prefix_video(
         "0",
         "-i",
         canonical_video_path,
-        "-t",
-        str(end_t),
-        "-an",
-        "-vf",
-        vf,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "23",
+    ]
+    if not preserve_full_video:
+        cmd += ["-t", str(output_end_t)]
+    cmd += [
+        "-an", "-vf", vf,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         output_path,
     ]
 
@@ -873,6 +913,9 @@ def _normalize_single_turn_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     out["group_id"] = out["question_class"]
     out["mode"] = doc.get("mode", "single_turn")
     out["video_path"] = _rewrite_path(doc.get("video_path"))
+    out["target_reference_image_path"] = doc.get("target_reference_image_path")
+    out["target_reference_steps"] = doc.get("target_reference_steps") or []
+    out["target_reference_metadata"] = doc.get("target_reference_metadata")
     return out
 
 
@@ -1067,6 +1110,9 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         "object_a_assoc_id": raw_doc.get("object_a_assoc_id"),
         "object_a_name": raw_doc.get("object_a_name"),
         "generation_info": raw_doc.get("generation_info"),
+        "target_reference_image_path": raw_doc.get("target_reference_image_path"),
+        "target_reference_steps": raw_doc.get("target_reference_steps") or [],
+        "target_reference_metadata": raw_doc.get("target_reference_metadata"),
         "include_gold_history": raw_doc.get("include_gold_history", True),
         "mode": "multi_turn",
     }
@@ -1152,6 +1198,16 @@ def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
             continue
 
         query_time = float(query_time)
+
+        if _use_last_frame_context():
+            marker_xy = None
+            if _needs_anchor_marker(doc):
+                marker_xy = _get_anchor_marker_xy_norm(doc)
+            key = ("last_frame", video_path, query_time, marker_xy)
+            if key not in seen:
+                seen.add(key)
+                _extract_query_frame_image(video_path, query_time, marker_xy)
+            continue
 
         if _is_step1_query_frame_debug(doc):
             key = ("query_frame", video_path, query_time)
@@ -1247,14 +1303,54 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
 
     query_time_sec = float(doc.get("query_time_sec", 0.0))
 
+    if _use_last_frame_context():
+        doc["video_context"] = "last_frame"
+        marker_xy_norm = None
+        if _needs_anchor_marker(doc):
+            marker_xy_norm = _get_anchor_marker_xy_norm(doc)
+            if marker_xy_norm is None:
+                eval_logger.warning(
+                    "Last-frame marker requested but no valid object_y coordinates were "
+                    f"found for doc id={doc.get('id')}"
+                )
+
+        frame_path = _extract_query_frame_image(
+            video_path,
+            query_time_sec,
+            marker_xy_norm,
+        )
+        eval_logger.info(
+            f"OOS_VIDEO_CONTEXT={OOS_VIDEO_CONTEXT}; using query-time frame for "
+            f"doc id={doc.get('id')}: {frame_path}"
+        )
+        return _append_target_reference(doc, [frame_path])
+
     if _use_full_video_context():
         full_path = _preprocess_video(video_path)
         doc["video_context"] = "full"
         doc["stream3d_query_time_sec"] = query_time_sec
+        if _needs_anchor_marker(doc):
+            marker_xy_norm = _get_anchor_marker_xy_norm(doc)
+            if marker_xy_norm is not None:
+                meta = doc.get("answer_metadata") or {}
+                marker_label = meta.get("object_y_name") or "marked object"
+                full_path = _extract_marked_prefix_video(
+                    video_path,
+                    query_time_sec + 1.0,
+                    marker_xy_norm,
+                    marker_label=marker_label,
+                    preserve_full_video=True,
+                    marker_time=query_time_sec,
+                )
+            else:
+                eval_logger.warning(
+                    "Skipping anchor marker because no valid marker coordinates were "
+                    f"found for doc id={doc.get('id')}"
+                )
         eval_logger.info(
             f"OOS_VIDEO_CONTEXT={OOS_VIDEO_CONTEXT}; using full video for doc id={doc.get('id')}: {full_path}"
         )
-        return [full_path]
+        return _append_target_reference(doc, [full_path])
 
     doc["video_context"] = "prefix"
 
@@ -1263,7 +1359,7 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
         eval_logger.info(
             f"OOS_STEP1_QUERY_FRAME_DEBUG=1; using query-time image for doc id={doc.get('id')}: {frame_path}"
         )
-        return [frame_path]
+        return _append_target_reference(doc, [frame_path])
 
     if _needs_anchor_marker(doc):
         marker_xy_norm = _get_anchor_marker_xy_norm(doc)
@@ -1271,14 +1367,14 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
             meta = doc.get("answer_metadata") or {}
             marker_label = meta.get("object_y_name") or "marked object"
 
-            return [
+            return _append_target_reference(doc, [
                 _extract_marked_prefix_video(
                     video_path,
                     query_time_sec + 1.0,
                     marker_xy_norm,
                     marker_label=marker_label,
                 )
-            ]
+            ])
 
         eval_logger.warning(
             f"Anchor marker requested but no valid object_y pixel found for doc id={doc.get('id')}"
@@ -1302,6 +1398,38 @@ def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
                 f"OOS_STEP4_RAW_FIXTURE_OPTIONS=1 but no valid BEV image found for doc id={doc.get('id')}"
             )
 
+    return _append_target_reference(doc, visuals)
+
+
+def _append_target_reference(doc: Dict[str, Any], visuals: List[str]) -> List[str]:
+    """Place a dataset-provided identity image only for its requested steps."""
+    reference_path = doc.get("target_reference_image_path")
+    reference_steps = {
+        _step_id(step) for step in (doc.get("target_reference_steps") or [])
+    }
+    if reference_path and _step_id(doc.get("step")) in reference_steps:
+        reference_path = str(reference_path)
+        if not os.path.isfile(reference_path):
+            raise FileNotFoundError(
+                f"Target reference image does not exist for doc id={doc.get('id')}: "
+                f"{reference_path}"
+            )
+
+        position = os.getenv("OOS_TARGET_REFERENCE_POSITION", "after").strip().lower()
+        if position == "before":
+            visuals.insert(0, reference_path)
+        elif position == "after":
+            visuals.append(reference_path)
+        else:
+            raise ValueError(
+                "OOS_TARGET_REFERENCE_POSITION must be 'before' or 'after', "
+                f"but got {position!r}."
+            )
+
+        eval_logger.info(
+            f"Added target identity reference {position} other visuals for "
+            f"doc id={doc.get('id')}: {reference_path}"
+        )
     return visuals
 
 

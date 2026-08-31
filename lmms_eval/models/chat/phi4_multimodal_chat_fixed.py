@@ -357,9 +357,8 @@ class Phi4ChatFixed(Phi4Simple):
                     f"{self._content_preview(msg['content'])}"
                 )
 
-            # Critical OOS behavior:
+            # Use doc_to_visual as a fallback for task versions whose
             # doc_to_messages contains text/history only.
-            # Video must be obtained from the bound task's doc_to_visual.
             bound_task = getattr(doc_to_source, "__self__", None)
             if bound_task is None or not hasattr(bound_task, "doc_to_visual"):
                 raise ValueError(
@@ -372,8 +371,15 @@ class Phi4ChatFixed(Phi4Simple):
             self._dbg(f"[VISUALS RAW] {visuals}")
             self._dbg(f"[VISUALS PROTOCOL] {visual_content}")
 
-            # Attach video/images to the first user turn, matching your fixed Qwen behavior.
-            if visual_content:
+            # Newer OOS doc_to_messages already embeds the video. Only use
+            # doc_to_visual as a fallback when the messages contain no media.
+            has_embedded_media = any(
+                item.get("type") in {"video", "image"}
+                for message in messages
+                for item in message.get("content", [])
+            )
+
+            if visual_content and not has_embedded_media:
                 system_msgs = [m for m in messages if m.get("role") == "system"]
                 non_system_msgs = [m for m in messages if m.get("role") != "system"]
 
@@ -403,6 +409,8 @@ class Phi4ChatFixed(Phi4Simple):
                         f"[VIDEO ATTACH] first_user_types="
                         f"{[c.get('type') for c in non_system_msgs[first_user_idx]['content']]}"
                     )
+            elif has_embedded_media:
+                self._dbg("[VIDEO ATTACH] using media already embedded by doc_to_messages")
             else:
                 self._dbg("[WARNING] visual_content is empty; no video/image attached.")
 
@@ -568,7 +576,7 @@ class Phi4ChatFixed(Phi4Simple):
                     **generate_kwargs,
                 )
             except Exception as e:
-                eval_logger.error(f"Error generating text: {e}")
+                eval_logger.exception(f"Error generating text: {e}")
                 cont = inputs["input_ids"]
             end_time = time.time()
 
