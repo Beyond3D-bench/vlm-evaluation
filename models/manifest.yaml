@@ -10,11 +10,8 @@ source_repositories:
       CUT3R: 51244364af3566d6473559f71a81b4accc75c424
     patches:
       - patches/cut3r-curope-torch2-scalar-type.patch
-    # These current runtime changes must be captured as standalone patches
-    # before the source bootstrap can be considered complete.
-    pending_patch_capture:
-      - llava/model/builder.py
-      - llava/model/multimodal_spatial_encoder/cut3r_spatial_encoder.py
+      - patches/vlm3r-low-memory-loading.patch
+      - patches/vlm3r-cut3r-weight-path.patch
   spatial_mllm:
     url: https://github.com/THU-SI/Spatial-MLLM.git
     revision: 9fc47382c7bc5ab52951e6e2e64db08fca0948ee

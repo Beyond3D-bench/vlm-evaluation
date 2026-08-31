@@ -213,7 +213,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["test"]
+testpaths = ["test", "tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
