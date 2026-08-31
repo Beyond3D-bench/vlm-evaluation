@@ -1,8 +1,31 @@
-# Reproducible Environment Setup
+# OOS VLM Evaluation
+
+This repository contains the OOS video-question-answering evaluation protocol,
+lmms-eval model adapters, launchers, scoring code, and reproducibility metadata.
+Model weights and external model source repositories are not redistributed.
+
+The evaluation uses the authors' released model implementations and checkpoints
+at pinned revisions. Small compatibility patches for offline loading, current
+PyTorch APIs, and memory-efficient initialization are documented in
+[`patches/`](patches/README.md). Evaluation-specific frame sampling, prompts,
+generation settings, and scoring are implemented in this repository.
+
+Reproducibility entry points:
+
+- [`models/manifest.yaml`](models/manifest.yaml): external source and checkpoint revisions.
+- [`models/README.md`](models/README.md): login-node download and offline verification commands.
+- [`.env.example`](.env.example): portable storage/cache configuration.
+- [`launchers/README.md`](launchers/README.md): model presets and execution commands.
+
+The setup below documents the validated ETH Euler CUDA 12.8 environment. Other
+systems should copy `.env.example` to `.env` and override `OOS_STORAGE_ROOT`,
+environment activation, FFmpeg, and Slurm settings as needed.
+
+## Reproducible Euler environment setup
 
 This creates a Python 3.10 environment with CUDA 12.8 PyTorch.
 
-## 1. Install uv
+### 1. Install uv
 
 ```bash
 USERNAME="$(whoami)"
@@ -19,7 +42,7 @@ grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc || \
 uv --version
 ```
 
-## 2. Create and activate the venv
+### 2. Create and activate the venv
 
 This keeps the full virtual environment physically inside the repository on
 home storage:
@@ -38,21 +61,21 @@ uv venv --python 3.10 "$OOS_VENV_DIR"
 source "$OOS_VENV_DIR/bin/activate"
 ```
 
-## 3. Install CUDA 12.8 PyTorch
+### 3. Install CUDA 12.8 PyTorch
 
 ```bash
 uv pip install torch==2.7.1 torchvision==0.22.1 \
   --index-url https://download.pytorch.org/whl/cu128
 ```
 
-## 4. Install this repo
+### 4. Install this repo
 
 ```bash
 printf "torch==2.7.1\ntorchvision==0.22.1\n" > constraints-torch.txt
 uv pip install -e ".[all]" -c constraints-torch.txt
 ```
 
-## 5. Verify
+### 5. Verify
 
 ```bash
 uv pip show torch torchvision lmms-eval --python .venv-cu128-home/bin/python
@@ -70,14 +93,16 @@ Editable project location: /cluster/home/<username>/oos_vlm_evaluation
 Note: this `uv` venv may not have `python -m pip`. Use
 `uv pip ... --python .venv-cu128-home/bin/python` instead.
 
-## 6. Install ffmpeg
+### 6. Install ffmpeg
 conda create -p /cluster/home/${USERNAME}/scratch/venvs/ffmpeg_env \
   -c conda-forge ffmpeg -y
 
-If you follow the instructions, then to run the slurm jobs, you only need to navigate to `/cluster/home/${USERNAME}/oos_vlm_evaluation/launchers/oos_env.sh` to change the `USER`.
+Copy `.env.example` to `.env` and set any machine-specific storage or tool
+paths there. The launcher derives paths from `OOS_STORAGE_ROOT`; do not edit or
+hard-code `USER` in `launchers/oos_env.sh`.
 
 
-## 7. Clean the uv cache from time to time to save space
+### 7. Clean the uv cache from time to time to save space
 check space left
 ```bash
 lquota
@@ -88,7 +113,7 @@ remove cache safely
 uv cache clean
 ```
 
-# Cambrian-P setup (CUDA 12.8 and offline compute nodes)
+## Cambrian-P setup (CUDA 12.8 and offline compute nodes)
 
 Cambrian-P uses the CUDA 12.8 environment created above, plus a small package
 overlay on scratch storage. The overlay supplies the older Transformers stack
@@ -99,7 +124,7 @@ Do **not** install `cambrian-s` for this model. Cambrian-P uses the official
 [`cambrian-mllm/cambrian-p`](https://github.com/cambrian-mllm/cambrian-p)
 repository and imports the `cambrianp` package.
 
-## 8. Clone and patch the official Cambrian-P repository
+### 8. Clone and patch the official Cambrian-P repository
 
 The patch is pinned to official Cambrian-P commit
 `b3c15527a9f9c4b70020b874eab66f67b2b03901`.
@@ -134,7 +159,7 @@ git -C "$CAMBRIAN_P_PATH" apply --reverse --check \
 
 That command exits successfully when the patch has already been applied.
 
-## 9. Create the low-space Cambrian-P overlay
+### 9. Create the low-space Cambrian-P overlay
 
 ```bash
 export OOS_VENV_DIR="${OOS_REPO_DIR}/.venv-cu128-home"
@@ -178,7 +203,7 @@ PYTHONPATH="$CAMBRIAN_P_PATH:$CAMBRIAN_P_VGGT_PATH:$CAMBRIAN_OVERLAY" \
 Expected core versions are CUDA 12.8 PyTorch `2.7.1+cu128` and Transformers
 `4.37.0` from the overlay.
 
-## 10. Download the Cambrian-P checkpoint before submitting
+### 10. Download the Cambrian-P checkpoint before submitting
 
 Compute nodes run in offline mode, so download the checkpoint from a login node:
 
@@ -198,7 +223,7 @@ The default Cambrian-P paths are configured in
 `CAMBRIAN_P_PATH`, `CAMBRIAN_P_VGGT_PATH`, and `CAMBRIAN_OVERLAY` before calling
 `sbatch`.
 
-## 11. Run Cambrian-P
+### 11. Run Cambrian-P
 
 ```bash
 cd "$OOS_REPO_DIR"
@@ -215,7 +240,7 @@ The Cambrian-P preset enables `CAMBRIAN_P_OFFLINE=1`, `HF_HUB_OFFLINE=1`, and
 `TRANSFORMERS_OFFLINE=1`. It also supplies the official camera-token, spatial
 pooling, and Qwen 1.5 conversation settings used by the local lmms-eval adapter.
 
-# Spatial-MLLM setup (CUDA 12.8 and offline compute nodes)
+## Spatial-MLLM setup (CUDA 12.8 and offline compute nodes)
 
 Spatial-MLLM uses the same CUDA 12.8 environment created in sections 1-5, plus
 a small dependency overlay on scratch storage. This avoids duplicating the full
@@ -226,7 +251,7 @@ The RTX PRO 6000/Blackwell setup uses PyTorch `2.7.1+cu128` and SDPA. Do not
 install the FlashAttention wheel linked in the upstream Spatial-MLLM README: it
 was built for PyTorch 2.6 and is not compatible with this environment.
 
-## 12. Clone the official Spatial-MLLM repository
+### 12. Clone the official Spatial-MLLM repository
 
 The setup below is validated against official Spatial-MLLM commit
 `9fc47382c7bc5ab52951e6e2e64db08fca0948ee`. No patch to the upstream
@@ -249,7 +274,7 @@ If the repository is already present, confirm its revision with:
 git -C "$SPATIAL_MLLM_REPO" rev-parse HEAD
 ```
 
-## 13. Create the low-space Spatial-MLLM overlay
+### 13. Create the low-space Spatial-MLLM overlay
 
 ```bash
 export OOS_VENV_DIR="${OOS_REPO_DIR}/.venv-cu128-home"
@@ -292,7 +317,7 @@ Expected core versions are PyTorch `2.7.1+cu128`, torchvision `0.22.1+cu128`,
 Transformers `4.51.3`, and DeepSpeed `0.19.2`. An NVML warning is expected if
 this verification is run on a login node without GPU access.
 
-## 14. Download the Spatial-MLLM checkpoint before submitting
+### 14. Download the Spatial-MLLM checkpoint before submitting
 
 Compute nodes cannot reach Hugging Face, so download the checkpoint on a login
 node into the path expected by the launcher:
@@ -310,7 +335,7 @@ the clone, overlay, or checkpoint is stored elsewhere, export
 `SPATIAL_MLLM_REPO`, `SPATIAL_MLLM_EXTERNAL_PATH`, `SPATIAL_OVERLAY`, or
 `SPATIAL_MLLM_CKPT` before calling `sbatch`.
 
-## 15. Run Spatial-MLLM
+### 15. Run Spatial-MLLM
 
 ```bash
 cd "$OOS_REPO_DIR"
@@ -323,7 +348,7 @@ For a small smoke test:
 OOS_MODEL=spatial_mllm OOS_LIMIT=2 sbatch launchers/slurm_oos_eval.sh
 ```
 
-# Stream3D-VLM setup (CUDA 12.8 and offline compute nodes)
+## Stream3D-VLM setup (CUDA 12.8 and offline compute nodes)
 
 Stream3D-VLM uses the CUDA 12.8 environment created in sections 1-5 and a
 small dependency overlay on scratch storage. Do not install the upstream
@@ -335,7 +360,7 @@ This evaluation uses SDPA instead of the upstream FlashAttention installation
 and Decord instead of TorchCodec. Neither FlashAttention, TorchCodec, DeepSpeed,
 nor the training-only dependencies are required by the OOS inference adapter.
 
-## 16. Clone the official Stream3D-VLM repository
+### 16. Clone the official Stream3D-VLM repository
 
 The setup below is validated against official Stream3D-VLM commit
 `6a7929a18a97eb092398ea6f0a7aad5041e034b4`. No patch to the upstream
@@ -358,7 +383,7 @@ If the repository is already present, confirm its revision with:
 git -C "$STREAM3D_VLM_REPO" rev-parse HEAD
 ```
 
-## 17. Create the low-space Stream3D-VLM overlay
+### 17. Create the low-space Stream3D-VLM overlay
 
 Keep both the overlay and the `uv` extraction cache on scratch. Setting only
 `--target` is insufficient because `uv` otherwise extracts downloaded wheels
@@ -408,7 +433,7 @@ Expected core versions are PyTorch `2.7.1+cu128`, torchvision `0.22.1+cu128`,
 Transformers `4.50.0`, and Decord `0.6.0`. A message saying FlashAttention is
 unavailable and SDPA will be used is expected.
 
-## 18. Download the Stream3D-VLM checkpoint before submitting
+### 18. Download the Stream3D-VLM checkpoint before submitting
 
 Compute nodes cannot reach Hugging Face, so download the checkpoint on a login
 node into a local directory. A directory containing only previous evaluation
@@ -425,7 +450,7 @@ export STREAM3D_VLM_CKPT="/cluster/home/${USERNAME}/scratch/checkpoints/Stream3D
 Confirm that the download contains `config.json`, tokenizer and processor
 files, and model weight shards before submitting the job.
 
-## 19. Run Stream3D-VLM with the overlay
+### 19. Run Stream3D-VLM with the overlay
 
 Export the local paths and model arguments before `sbatch`. These values keep
 the compute-node run offline, select Decord and SDPA, and stage the checkpoint
@@ -455,7 +480,7 @@ For a small smoke test:
 OOS_MODEL=stream3d_vlm OOS_LIMIT=2 sbatch launchers/slurm_oos_eval.sh
 ```
 
-# How to run jobs
+## How to run jobs
 1. edit the path of vqa that you want to evaluate: `/cluster/home/$USERNAME/oos_vlm_evaluation/lmms_eval/tasks/oos_videoqa/oos_videoqa_multi_turn.yaml`. (you can also change the system prompt, maximum number of output tokens, temperature etc here)
 
 2. decide the model you want to use, and modify some model specific arguments such as model weights dir, fps, max_num_frames...etc here `/cluster/home/$USERNAME/oos_vlm_evaluation/launchers/models`.

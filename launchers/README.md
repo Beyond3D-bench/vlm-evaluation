@@ -74,7 +74,7 @@ Examples:
 OOS_MODEL=qwen3_6 bash launchers/run_oos_eval.sh
 OOS_MODEL=internvl OOS_LIMIT=2 bash launchers/run_oos_eval.sh
 OOS_MODEL=qwen3_vl OOS_TARGET_REFERENCE_POSITION=before bash launchers/run_oos_eval.sh
-OOS_MODEL=cambrian_p OOS_LIMIT=2 OOS_VENV=/cluster/home/fangma/scratch/venvs/oos_vlm_evaluation-cu124-cambrianp/bin/activate bash launchers/run_oos_eval.sh
+OOS_MODEL=cambrian_p OOS_LIMIT=2 OOS_VENV=/path/to/cambrian-venv/bin/activate bash launchers/run_oos_eval.sh
 OOS_MODEL=qwen3_6 OOS_VENV=.venv/bin/activate sbatch launchers/slurm_oos_eval.sh
 OOS_MODEL=spatial_mllm OOS_VENV=.venv-SpatialMLLM/activate_oos.sh bash launchers/run_oos_eval.sh
 OOS_MODEL=sensenova_internvl OOS_VENV=.venv-SenseNovaSI/activate_oos.sh bash launchers/run_oos_eval.sh

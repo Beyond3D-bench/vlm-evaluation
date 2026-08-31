@@ -56,6 +56,7 @@ submissions/
 remote_code/*
 
 # External repos cloned locally
+.model-sources/
 LLaVA/
 InternVL/
 llava-video/
