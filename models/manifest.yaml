@@ -28,12 +28,6 @@ source_repositories:
     patches:
       - file: patches/cambrian-p-offline.patch
         workdir: .
-  stream3d_vlm:
-    url: https://github.com/hanxunyu/Stream3D-VLM.git
-    directory: Stream3D-VLM
-    revision: 6a7929a18a97eb092398ea6f0a7aad5041e034b4
-    patches: []
-
 # Download these repositories into the standard Hugging Face Hub cache. A null
 # revision is intentionally invalid for reproducibility: it marks an artifact
 # whose exact downloaded revision still needs to be recovered and pinned.
@@ -64,10 +58,6 @@ huggingface_models:
         revision: 173db47dc4784f4c4cd84ad7129a4ddbb4ef7113
       - repo_id: lmms-lab/LLaVA-NeXT-Video-7B-Qwen2
         revision: 013210b3aff822f1558b166d39c1046dd109520f
-  stream3d_vlm:
-    artifacts:
-      - repo_id: JonnyYu828/Stream3D-VLM-4B
-        revision: 28a5245b13391c22fe474fa8e874db44a594c7cf
   cambrian_p:
     artifacts:
       - repo_id: nyu-visionx/Cambrian-P-7B
