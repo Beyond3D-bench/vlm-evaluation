@@ -4,33 +4,35 @@ if [ -f .env ]; then
   source .env
   set +a
 fi
-export USER="fangma"
 # Required for private Hugging Face models or gated datasets.
 export HF_TOKEN="${SECRET_KEY:-${HF_TOKEN:-}}"
 # export HF_HUB_DISABLE_XET=1
 
-# export HF_HOME="/work/courses/3dv/team1/.cache/huggingface"
-# export HF_HUB_CACHE="/work/courses/3dv/team1/.cache/huggingface/hub"
-# export HF_XET_CACHE="/work/courses/3dv/team1/.cache/huggingface/xet"
-# export HF_DATASETS_CACHE="/work/courses/3dv/team1/.cache/huggingface/datasets"
-# export TMPDIR="/work/courses/3dv/team1/tmp"
+# Persistent storage. Override OOS_STORAGE_ROOT in .env on systems that do not
+# use $HOME/scratch. This default preserves the existing Euler layout without
+# embedding a cluster hostname or username in the public configuration.
+export OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
+export OOS_CHECKPOINT_DIR="${OOS_CHECKPOINT_DIR:-$OOS_STORAGE_ROOT/checkpoints}"
+export OOS_OVERLAY_ROOT="${OOS_OVERLAY_ROOT:-$OOS_STORAGE_ROOT/python-overlays}"
+export OOS_VENV_ROOT="${OOS_VENV_ROOT:-$OOS_STORAGE_ROOT/venvs}"
+export OOS_DATA_ROOT="${OOS_DATA_ROOT:-$OOS_STORAGE_ROOT/data}"
 
-# Local cache/output directories. Defaults are relative to the repository root
-# when launchers/run_oos_eval.sh is used.
-export HF_HOME="${HF_HOME:-/cluster/home/$USER/scratch/hf_cache}"
+# Persistent Hugging Face cache. Downloads made on a login node remain
+# available to offline compute jobs through the standard Hub cache layout.
+export HF_HOME="${HF_HOME:-$OOS_STORAGE_ROOT/hf_cache}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
-export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/cluster/home/$USER/scratch/hf_cache/datasets}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export LMMS_EVAL_DATASETS_CACHE="${LMMS_EVAL_DATASETS_CACHE:-$HF_DATASETS_CACHE}"
-export LMMS_EVAL_CACHE="${LMMS_EVAL_CACHE:-/cluster/home/$USER/scratch/lmms_eval_cache}"
+export LMMS_EVAL_CACHE="${LMMS_EVAL_CACHE:-$OOS_STORAGE_ROOT/lmms_eval_cache}"
 # In Slurm jobs, Euler sets TMPDIR to node-local scratch when #SBATCH --tmp is
 # requested. Keep that value; falling back to network scratch makes imports slow.
-export TMPDIR="${OOS_TMPDIR:-${TMPDIR:-/cluster/home/$USER/scratch/tmp}}"
+export TMPDIR="${OOS_TMPDIR:-${TMPDIR:-$OOS_STORAGE_ROOT/tmp}}"
 export OOS_JOB_CACHE_ROOT="${OOS_JOB_CACHE_ROOT:-$TMPDIR/oos_vlm_evaluation}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$OOS_JOB_CACHE_ROOT/xdg_cache}"
 export TORCH_HOME="${TORCH_HOME:-$OOS_JOB_CACHE_ROOT/torch_cache}"
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$OOS_JOB_CACHE_ROOT/pycache}"
-export OOS_VIDEO_CACHE_DIR="${OOS_VIDEO_CACHE_DIR:-/cluster/home/$USER/scratch/oos_video_cache3}"
-export OOS_OUTPUT_DIR="${OOS_OUTPUT_DIR:-/cluster/home/$USER/scratch/lmms-eval/outputs/oos_videoqa}"
+export OOS_VIDEO_CACHE_DIR="${OOS_VIDEO_CACHE_DIR:-$OOS_STORAGE_ROOT/oos_video_cache3}"
+export OOS_OUTPUT_DIR="${OOS_OUTPUT_DIR:-$OOS_STORAGE_ROOT/lmms-eval/outputs/oos_videoqa}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export HF_ENABLE_PARALLEL_LOADING="${HF_ENABLE_PARALLEL_LOADING:-true}"
 export HF_PARALLEL_LOADING_WORKERS="${HF_PARALLEL_LOADING_WORKERS:-4}"
@@ -38,10 +40,10 @@ export HF_PARALLEL_LOADING_WORKERS="${HF_PARALLEL_LOADING_WORKERS:-4}"
 if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
-  export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-/cluster/home/$USER/scratch/checkpoints/Spatial-MLLM-v1.1-Instruct-820K}"
-  export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-/cluster/home/$USER/scratch/Spatial-MLLM}"
+  export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-$OOS_CHECKPOINT_DIR/Spatial-MLLM-v1.1-Instruct-820K}"
+  export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-$OOS_STORAGE_ROOT/Spatial-MLLM}"
   export SPATIAL_MLLM_EXTERNAL_PATH="${SPATIAL_MLLM_EXTERNAL_PATH:-${SPATIAL_MLLM_REPO}/src/qwenvl/external}"
-  export SPATIAL_OVERLAY="${SPATIAL_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/spatial-mllm-cu128}"
+  export SPATIAL_OVERLAY="${SPATIAL_OVERLAY:-$OOS_OVERLAY_ROOT/spatial-mllm-cu128}"
 
   # Prepend in reverse priority order so the final search order is
   # Spatial-MLLM, bundled VGGT, the dependency overlay, then the base venv.
@@ -67,7 +69,7 @@ fi
 if [ "${OOS_MODEL:-}" = "phi4" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/launchers/activate_phi4_env.sh}"
-  export PHI4_CKPT="${PHI4_CKPT:-/cluster/home/$USER/scratch/checkpoints/Phi-4-multimodal-instruct}"
+  export PHI4_CKPT="${PHI4_CKPT:-$OOS_CHECKPOINT_DIR/Phi-4-multimodal-instruct}"
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
   export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$PHI4_CKPT}"
 fi
@@ -75,7 +77,7 @@ fi
 if [ "${OOS_MODEL:-}" = "sensenova_internvl" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-SenseNovaSI/activate_oos.sh}"
-  export SENSENOVA_INTERNVL_CKPT="${SENSENOVA_INTERNVL_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.5-InternVL3-8B}"
+  export SENSENOVA_INTERNVL_CKPT="${SENSENOVA_INTERNVL_CKPT:-$OOS_CHECKPOINT_DIR/SenseNova-SI-1.5-InternVL3-8B}"
   export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-decord}"
   export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
@@ -85,7 +87,7 @@ fi
 if [ "${OOS_MODEL:-}" = "sensenova_qwen" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
-  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-/cluster/home/$USER/scratch/checkpoints/SenseNova-SI-1.3-Qwen3-VL-8B}"
+  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-$OOS_CHECKPOINT_DIR/SenseNova-SI-1.3-Qwen3-VL-8B}"
   export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
   export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
@@ -95,8 +97,8 @@ fi
 if [ "${OOS_MODEL:-}" = "cambrian_p" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
-  export CAMBRIAN_OVERLAY="${CAMBRIAN_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/cambrian-cu128}"
-  export CAMBRIAN_P_PATH="${CAMBRIAN_P_PATH:-/cluster/home/$USER/scratch/cambrian-p}"
+  export CAMBRIAN_OVERLAY="${CAMBRIAN_OVERLAY:-$OOS_OVERLAY_ROOT/cambrian-cu128}"
+  export CAMBRIAN_P_PATH="${CAMBRIAN_P_PATH:-$OOS_STORAGE_ROOT/cambrian-p}"
   export CAMBRIAN_P_VGGT_PATH="${CAMBRIAN_P_VGGT_PATH:-${CAMBRIAN_P_PATH}/vggt}"
 
   # Prepend in reverse priority order so the final search order is
@@ -112,8 +114,8 @@ if [ "${OOS_MODEL:-}" = "cambrian_p" ]; then
 fi
 
 # OOS task behavior.
-export OOS_VENV="${OOS_VENV:-.venv-cu128-home/bin/activate}"
-export OOS_DATASET_JSONL="${OOS_DATASET_JSONL:-/cluster/home/$USER/scratch/data/vqa/sample_100_ordered_future_object_reference_next_movement_end.jsonl}"
+export OOS_VENV="${OOS_VENV:-${REPO_DIR:-$(pwd)}/.venv-cu128-home/bin/activate}"
+export OOS_DATASET_JSONL="${OOS_DATASET_JSONL:-$OOS_DATA_ROOT/vqa/sample_100_ordered_future_object_reference_next_movement_end.jsonl}"
 export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-}"
 export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-none}"          # none, gold, pred
 export LMMS_EVAL_SHUFFLE_DOCS="${LMMS_EVAL_SHUFFLE_DOCS:-0}" # keep 0 for pred mode
@@ -145,21 +147,18 @@ export OOS_COORD_TOLERANCE_NORM="${OOS_COORD_TOLERANCE_NORM:-0.2}"
 export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
 
 # VLM-3R local source, dependency overlay, LoRA adapter, and base model.
-export VLM3R_REPO="${VLM3R_REPO:-/cluster/home/$USER/scratch/VLM-3R}"
-export VLM3R_OVERLAY="${VLM3R_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/vlm3r-cu128}"
-export VLM3R_CKPT="${VLM3R_CKPT:-/cluster/home/$USER/scratch/hf_cache/vlm-3r-llava-qwen2-lora}"
-export VLM3R_BASE="${VLM3R_BASE:-/cluster/home/$USER/scratch/hf_cache/LLaVA-NeXT-Video-7B-Qwen2}"
+export VLM3R_REPO="${VLM3R_REPO:-$OOS_STORAGE_ROOT/VLM-3R}"
+export VLM3R_OVERLAY="${VLM3R_OVERLAY:-$OOS_OVERLAY_ROOT/vlm3r-cu128}"
+export VLM3R_CKPT="${VLM3R_CKPT:-$HF_HOME/vlm-3r-llava-qwen2-lora}"
+export VLM3R_BASE="${VLM3R_BASE:-$HF_HOME/LLaVA-NeXT-Video-7B-Qwen2}"
 export VLM3R_CUT3R_WEIGHTS="${VLM3R_CUT3R_WEIGHTS:-$VLM3R_REPO/CUT3R/src/cut3r_512_dpt_4_64.pth}"
 # Copy all VLM-3R checkpoints to the Slurm job's node-local 100 GB TMPDIR.
 export VLM3R_STAGE_TO_TMP="${VLM3R_STAGE_TO_TMP:-1}"
 
-# Current ETH 3dv GB10 settings used by the existing Qwen3.6 script.
-# export TORCH_CUDNN_V8_API_DISABLED=1 # This needs to be disabled on euler!!! Otherwise qwen3.5 will take around 680 times longer
-# export FFMPEG_PATH="${FFMPEG_PATH:-/work/courses/3dv/team1/ffmpeg_env/bin/ffmpeg}"
-# export LD_LIBRARY_PATH="/work/courses/3dv/team1/ffmpeg_env/lib:${LD_LIBRARY_PATH:-}"
-# export PATH="/work/courses/3dv/team1/ffmpeg_env/bin:${PATH}"
-export FFMPEG_ROOT="/cluster/home/${USER}/scratch/venvs/ffmpeg_env"
-export FFMPEG_PATH="${FFMPEG_ROOT}/bin/ffmpeg"
+# Keep TORCH_CUDNN_V8_API_DISABLED unset on Euler; enabling it makes Qwen3.5
+# inference substantially slower.
+export FFMPEG_ROOT="${FFMPEG_ROOT:-$OOS_VENV_ROOT/ffmpeg_env}"
+export FFMPEG_PATH="${FFMPEG_PATH:-$FFMPEG_ROOT/bin/ffmpeg}"
 case ":${LD_LIBRARY_PATH:-}:" in
   *":${FFMPEG_ROOT}/lib:"*) ;;
   *) export LD_LIBRARY_PATH="${FFMPEG_ROOT}/lib:${LD_LIBRARY_PATH:-}" ;;
