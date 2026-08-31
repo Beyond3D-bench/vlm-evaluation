@@ -1,0 +1,86 @@
+version: 1
+
+# Public source trees used by adapters that cannot load entirely through
+# Transformers. Bootstrap tooling clones these outside this repository.
+source_repositories:
+  vlm3r:
+    url: https://github.com/VITA-Group/VLM-3R.git
+    revision: 206afd0ece4369457fb3c5c7781a6735fd2bbe8c
+    submodules:
+      CUT3R: 51244364af3566d6473559f71a81b4accc75c424
+    patches:
+      - patches/cut3r-curope-torch2-scalar-type.patch
+    # These current runtime changes must be captured as standalone patches
+    # before the source bootstrap can be considered complete.
+    pending_patch_capture:
+      - llava/model/builder.py
+      - llava/model/multimodal_spatial_encoder/cut3r_spatial_encoder.py
+  spatial_mllm:
+    url: https://github.com/THU-SI/Spatial-MLLM.git
+    revision: 9fc47382c7bc5ab52951e6e2e64db08fca0948ee
+    patches: []
+  cambrian_p:
+    url: https://github.com/cambrian-mllm/cambrian-p.git
+    revision: b3c15527a9f9c4b70020b874eab66f67b2b03901
+    patches:
+      - patches/cambrian-p-offline.patch
+  stream3d_vlm:
+    url: https://github.com/hanxunyu/Stream3D-VLM.git
+    revision: 6a7929a18a97eb092398ea6f0a7aad5041e034b4
+    patches: []
+
+# Download these repositories into the standard Hugging Face Hub cache. A null
+# revision is intentionally invalid for reproducibility: it marks an artifact
+# whose exact downloaded revision still needs to be recovered and pinned.
+huggingface_models:
+  qwen3_6:
+    artifacts:
+      - repo_id: Qwen/Qwen3.6-35B-A3B
+        revision: null
+  qwen3_vl:
+    artifacts:
+      - repo_id: Qwen/Qwen3-VL-8B-Instruct
+        revision: null
+  llava:
+    artifacts:
+      - repo_id: lmms-lab/LLaVA-OneVision-1.5-8B-Instruct
+        revision: null
+  internvl:
+    artifacts:
+      - repo_id: OpenGVLab/InternVL3_5-8B-HF
+        revision: 741a7d03020411e666c6109218ab71e08151ef86
+  phi4:
+    artifacts:
+      - repo_id: microsoft/Phi-4-multimodal-instruct
+        revision: null
+  vlm3r:
+    artifacts:
+      - repo_id: Journey9ni/vlm-3r-llava-qwen2-lora
+        revision: 173db47dc4784f4c4cd84ad7129a4ddbb4ef7113
+      - repo_id: lmms-lab/LLaVA-NeXT-Video-7B-Qwen2
+        revision: 013210b3aff822f1558b166d39c1046dd109520f
+  stream3d_vlm:
+    artifacts:
+      - repo_id: JonnyYu828/Stream3D-VLM-4B
+        revision: 28a5245b13391c22fe474fa8e874db44a594c7cf
+  cambrian_p:
+    artifacts:
+      - repo_id: nyu-visionx/Cambrian-P-7B
+        revision: d219bdf9c83ec63424f51f4b26be424c94211b3b
+      # Required by the unmodified upstream Cambrian-P loader.
+      - repo_id: lmms-lab/llava-onevision-qwen2-7b-ov
+        revision: null
+      - repo_id: google/siglip-so400m-patch14-384
+        revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
+  spatial_mllm:
+    artifacts:
+      - repo_id: Diankun/Spatial-MLLM-v1.1-Instruct-820K
+        revision: 89ac646b88effaa651d304a308bf6e543c305f0c
+  sensenova_internvl:
+    artifacts:
+      - repo_id: sensenova/SenseNova-SI-1.5-InternVL3-8B
+        revision: null
+  sensenova_qwen:
+    artifacts:
+      - repo_id: sensenova/SenseNova-SI-1.3-Qwen3-VL-8B
+        revision: a6328154b47faa7dc349a4f56477db00bff1ad1f
