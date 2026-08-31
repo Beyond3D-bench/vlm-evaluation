@@ -79,16 +79,8 @@ dependencies = [
 
 [project.optional-dependencies]
 core = [
-    "lmms_eval[server]",
     "lmms_eval[audio]",
     "lmms_eval[metrics]",
-]
-server = [
-    "fastapi",
-    "uvicorn",
-]
-mcp = [
-    "mcp[cli]>=1.20.0",
 ]
 audio = [
     "more-itertools",
@@ -133,10 +125,6 @@ prismmbench = [
     "pdf2image>=1.17.0",
     "pdfplumber>=0.11.9"
 ]
-tui = [
-    "fastapi>=0.100.0",
-    "uvicorn>=0.20.0",
-]
 video = [
     "torchcodec>=0.3.0",
 ]
@@ -146,19 +134,15 @@ video-legacy = [
 ]
 all = [
     "lmms_eval[core]",
-    "lmms_eval[mcp]",
     "lmms_eval[gemini]",
     "lmms_eval[reka]",
     "lmms_eval[qwen]",
     "lmms_eval[mmsearch]",
-    "lmms_eval[tui]",
     "lmms_eval[video]",
 ]
 
 [tool.setuptools.package-data]
 "lmms_eval" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.txt"]
-"lmms_eval.tui.web.dist" = ["**/*"]
-"lmms_eval.tui.web.dist.assets" = ["**/*"]
 
 [tool.setuptools.packages.find]
 include = ["lmms_eval*"]
@@ -199,18 +183,11 @@ exclude = [
 
 [project.scripts]
 lmms-eval = "lmms_eval.cli.dispatch:main"
-lmms-eval-mcp = "lmms_eval.mcp:main"
-lmms-eval-ui = "lmms_eval.tui.cli:main"
 
 [project.urls]
 Homepage = "https://lmms-lab.github.io"
 Repository = "https://github.com/EvolvingLMMs-Lab/lmms-eval"
 
-[dependency-groups]
-dev = [
-    "textual>=7.2.0",
-    "textual-dev>=1.8.0",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["test", "tests"]
