@@ -16,13 +16,9 @@ Default evaluation patches:
   compute nodes. It can be omitted when every upstream transitive dependency is
   available in the standard Hugging Face cache.
 
-`vlm-3r-point-cloud-export-path.patch` is an optional diagnostic extension and
-is not required for the default evaluation.
-
 Before applying a patch, check it against the pinned clean source tree:
 
 ```bash
 git -C /path/to/model apply --check /path/to/patch
 git -C /path/to/model apply /path/to/patch
 ```
-

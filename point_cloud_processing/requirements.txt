@@ -1,4 +1,0 @@
-open3d>=0.18.0
-numpy>=1.24
-tqdm>=4.66
-plyfile>=1.0.3
