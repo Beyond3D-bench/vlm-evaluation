@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-/cluster/home/fangma/scratch/checkpoints/Spatial-MLLM-v1.1-Instruct-820K}"
-SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-/cluster/home/fangma/scratch/Spatial-MLLM}"
+SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-$OOS_CHECKPOINT_DIR/Spatial-MLLM-v1.1-Instruct-820K}"
+SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-$OOS_STORAGE_ROOT/Spatial-MLLM}"
 
 export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
 export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SPATIAL_MLLM_CKPT}"

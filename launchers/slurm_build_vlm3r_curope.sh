@@ -12,20 +12,24 @@
 
 set -euo pipefail
 
-export VLM3R_PYTHON="${VLM3R_PYTHON:-/cluster/home/fangma/oos_vlm_evaluation/.venv-cu128-home/bin/python}"
-export VLM3R_REPO="${VLM3R_REPO:-/cluster/home/fangma/scratch/VLM-3R}"
-export VLM3R_OVERLAY="${VLM3R_OVERLAY:-/cluster/home/fangma/scratch/python-overlays/vlm3r-cu128}"
-export VLM3R_CUDA_HOME="${VLM3R_CUDA_HOME:-/cluster/home/fangma/scratch/toolchains/cuda-12.8}"
+LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$LAUNCHER_DIR/.." && pwd)"
+OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
+
+export VLM3R_PYTHON="${VLM3R_PYTHON:-$REPO_DIR/.venv-cu128-home/bin/python}"
+export VLM3R_REPO="${VLM3R_REPO:-$OOS_STORAGE_ROOT/VLM-3R}"
+export VLM3R_OVERLAY="${VLM3R_OVERLAY:-$OOS_STORAGE_ROOT/python-overlays/vlm3r-cu128}"
+export VLM3R_CUDA_HOME="${VLM3R_CUDA_HOME:-$OOS_STORAGE_ROOT/toolchains/cuda-12.8}"
 
 export CUDA_HOME="$VLM3R_CUDA_HOME"
 export PATH="$CUDA_HOME/bin:$VLM3R_OVERLAY/bin:$PATH"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export PYTHONPATH="$VLM3R_REPO:$VLM3R_REPO/CUT3R:/cluster/home/fangma/oos_vlm_evaluation:$VLM3R_OVERLAY"
+export PYTHONPATH="$VLM3R_REPO:$VLM3R_REPO/CUT3R:$REPO_DIR:$VLM3R_OVERLAY"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-12.0}"
 export MAX_JOBS="${MAX_JOBS:-${SLURM_CPUS_PER_TASK:-4}}"
 
 CUROPE_SOURCE="$VLM3R_REPO/CUT3R/src/croco/models/curope"
-CUROPE_BUILD_TEMP="${VLM3R_CUROPE_BUILD_TEMP:-${TMPDIR:-/cluster/home/fangma/scratch/tmp}/vlm3r-curope-build-${SLURM_JOB_ID:-manual}}"
+CUROPE_BUILD_TEMP="${VLM3R_CUROPE_BUILD_TEMP:-${TMPDIR:-$OOS_STORAGE_ROOT/tmp}/vlm3r-curope-build-${SLURM_JOB_ID:-manual}}"
 
 test -x "$VLM3R_PYTHON"
 test -x "$CUDA_HOME/bin/nvcc"

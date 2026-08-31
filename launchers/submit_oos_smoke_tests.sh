@@ -9,6 +9,7 @@ set -euo pipefail
 LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$LAUNCHER_DIR/.." && pwd)"
 SLURM_LAUNCHER="$LAUNCHER_DIR/slurm_oos_eval.sh"
+OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
 
 DEFAULT_MODELS=(
   qwen3_6
@@ -137,11 +138,11 @@ submit_model() {
         env
         "OOS_MODEL=$model"
         "OOS_LIMIT=$LIMIT"
-        "OOS_VENV=${OOS_CAMBRIAN_VENV:-/cluster/home/fangma/scratch/venvs/oos_vlm_evaluation-cu124-cambrianp/bin/activate}"
+        "OOS_VENV=${OOS_CAMBRIAN_VENV:-$OOS_STORAGE_ROOT/venvs/oos_vlm_evaluation-cu124-cambrianp/bin/activate}"
       )
       ;;
     stream3d_vlm)
-      command+=("STREAM3D_VLM_REPO=${STREAM3D_VLM_REPO:-/work/courses/3dv/team1/Stream3D-VLM}")
+      command+=("STREAM3D_VLM_REPO=${STREAM3D_VLM_REPO:-$OOS_STORAGE_ROOT/Stream3D-VLM}")
       ;;
   esac
 

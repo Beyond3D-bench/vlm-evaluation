@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-export STREAM3D_VLM_REPO="${STREAM3D_VLM_REPO:-/cluster/home/$USER/scratch/Stream3D-VLM}"
+export STREAM3D_VLM_REPO="${STREAM3D_VLM_REPO:-$OOS_STORAGE_ROOT/Stream3D-VLM}"
 export STREAM3D_VLM_SRC="${STREAM3D_VLM_SRC:-${STREAM3D_VLM_REPO}/src}"
-export STREAM3D_OVERLAY="${STREAM3D_OVERLAY:-/cluster/home/$USER/scratch/python-overlays/stream3d-cu128}"
-export STREAM3D_VLM_CKPT="${STREAM3D_VLM_CKPT:-/cluster/home/$USER/scratch/checkpoints/Stream3D-VLM-4B}"
+export STREAM3D_OVERLAY="${STREAM3D_OVERLAY:-$OOS_OVERLAY_ROOT/stream3d-cu128}"
+export STREAM3D_VLM_CKPT="${STREAM3D_VLM_CKPT:-$OOS_CHECKPOINT_DIR/Stream3D-VLM-4B}"
 
 # Keep the official source ahead of its pinned package overlay, followed by the
 # shared CUDA 12.8 environment. Prepend in reverse priority order.

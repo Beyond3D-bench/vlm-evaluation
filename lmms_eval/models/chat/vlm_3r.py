@@ -74,7 +74,7 @@ try:
 except ImportError as exc:
     raise ImportError(
         "VLM-3R requires the VITA-Group/VLM-3R repository on PYTHONPATH. "
-        "Example: PYTHONPATH=/work/courses/3dv/team1/VLM-3R:$PYTHONPATH"
+        "Add the pinned VLM-3R source tree to PYTHONPATH before launching."
     ) from exc
 
 

@@ -123,7 +123,7 @@ def _get_step4_bev_image_path(doc: Dict[str, Any]) -> Optional[str]:
 
     Example:
       video_id = P04-20240413-142619
-      -> /work/courses/3dv/team1/data/HD-EPIC/kit_layout/P04.jpeg
+      -> $OOS_DATA_ROOT/HD-EPIC/kit_layout/P04.jpeg
          or .jpg / .png
     """
     explicit_path = (
@@ -140,7 +140,7 @@ def _get_step4_bev_image_path(doc: Dict[str, Any]) -> Optional[str]:
 
     bev_dir = os.getenv(
         "OOS_KITCHEN_BEV_DIR",
-        "/work/courses/3dv/team1/data/HD-EPIC/kit_layout",
+        os.path.join(os.getenv("OOS_DATA_ROOT", "data"), "HD-EPIC", "kit_layout"),
     )
 
     video_id = (

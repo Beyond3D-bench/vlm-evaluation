@@ -147,7 +147,9 @@ class Stream3DVLM(lmms):
         self.video_decoder = video_decoder.strip().lower()
         self.default_max_new_tokens = int(max_new_tokens)
         self.temperature = float(temperature)
-        self.stream3d_repo = stream3d_repo or os.getenv("STREAM3D_VLM_REPO", "/work/courses/3dv/team1/Stream3D-VLM")
+        self.stream3d_repo = stream3d_repo or os.getenv("STREAM3D_VLM_REPO")
+        if not self.stream3d_repo:
+            raise ValueError("Set stream3d_repo or STREAM3D_VLM_REPO to the Stream3D-VLM source tree.")
         stream3d_src = Path(self.stream3d_repo) / "src"
         if stream3d_src.is_dir() and str(stream3d_src) not in sys.path:
             sys.path.insert(0, str(stream3d_src))
