@@ -360,10 +360,9 @@ OOS_MODEL=spatial_mllm OOS_LIMIT=2 sbatch launchers/slurm_oos_eval.sh
 OOS_MODEL=qwen3_6 sbatch launchers/slurm_oos_eval.sh
 ```
 
-The SenseNova-SI presets use the locally cached latest releases selected for
-this benchmark:
+The SenseNova-SI preset uses the locally cached release selected for this
+benchmark:
 
 ```bash
-OOS_MODEL=sensenova_internvl sbatch launchers/slurm_oos_eval.sh  # SenseNova-SI-1.5-InternVL3-8B
 OOS_MODEL=sensenova_qwen sbatch launchers/slurm_oos_eval.sh     # SenseNova-SI-1.3-Qwen3-VL-8B
 ```

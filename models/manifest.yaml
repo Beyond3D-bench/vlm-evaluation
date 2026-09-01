@@ -40,18 +40,10 @@ huggingface_models:
     artifacts:
       - repo_id: Qwen/Qwen3-VL-8B-Instruct
         revision: null
-  llava:
-    artifacts:
-      - repo_id: lmms-lab/LLaVA-OneVision-1.5-8B-Instruct
-        revision: null
   internvl:
     artifacts:
       - repo_id: OpenGVLab/InternVL3_5-8B-HF
         revision: 741a7d03020411e666c6109218ab71e08151ef86
-  phi4:
-    artifacts:
-      - repo_id: microsoft/Phi-4-multimodal-instruct
-        revision: null
   vlm3r:
     artifacts:
       - repo_id: Journey9ni/vlm-3r-llava-qwen2-lora
@@ -71,10 +63,6 @@ huggingface_models:
     artifacts:
       - repo_id: Diankun/Spatial-MLLM-v1.1-Instruct-820K
         revision: 89ac646b88effaa651d304a308bf6e543c305f0c
-  sensenova_internvl:
-    artifacts:
-      - repo_id: sensenova/SenseNova-SI-1.5-InternVL3-8B
-        revision: null
   sensenova_qwen:
     artifacts:
       - repo_id: sensenova/SenseNova-SI-1.3-Qwen3-VL-8B

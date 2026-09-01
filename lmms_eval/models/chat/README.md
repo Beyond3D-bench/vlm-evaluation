@@ -6,17 +6,15 @@ This fork retains only the chat backends selected by the model presets in
 | Backend ID | Adapter | Launcher presets |
 | --- | --- | --- |
 | `cambrian_p` | `cambrian_p.py` | `cambrian_p` |
-| `internvl_hf` | `internvl_hf.py` | `internvl`, `sensenova_internvl` |
-| `llava_onevision1_5_chat_fixed` | `llava_onevision1_5_chat_fixed.py` | `llava` |
-| `phi4_multimodal_chat_fixed` | `phi4_multimodal_chat_fixed.py` | `phi4` |
+| `internvl_hf` | `internvl_hf.py` | `internvl` |
 | `qwen3_5` | `qwen3_5.py` | `qwen3_6` |
 | `qwen3_vl_chat_fixed` | `qwen3_vl_chat_fixed.py` | `qwen3_vl`, `sensenova_qwen` |
 | `spatial_mllm` | `spatial_mllm.py` | `spatial_mllm` |
 | `vlm_3r` | `vlm_3r.py` | `vlm3r` |
 
 The small modules retained under `models/simple/` are implementation
-dependencies of the fixed Qwen, LLaVA, and Phi-4 chat adapters. They are not
-separate public backends in this evaluation repository.
+dependencies of the fixed Qwen chat adapters. They are not separate public
+backends in this evaluation repository.
 
 External source repositories and compatibility patches are pinned in
 `models/manifest.yaml`; see `models/README.md` for setup instructions.

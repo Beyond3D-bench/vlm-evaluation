@@ -4,7 +4,6 @@ tag: custom_videoqa
 dataset_path: json
 dataset_kwargs:
   data_files:
-    # test: evaluation/data/vqa/selected_250_sorted_ranges_step23_decoy_other_video_neutralprompt.jsonl
     test: ${OOS_DATASET_JSONL}
 
 

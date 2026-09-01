@@ -67,24 +67,6 @@ if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
   export OOS_SPATIAL_LOG_SAMPLES="${OOS_SPATIAL_LOG_SAMPLES:-1}"
 fi
 
-if [ "${OOS_MODEL:-}" = "phi4" ]; then
-  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
-  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/launchers/activate_phi4_env.sh}"
-  export PHI4_CKPT="${PHI4_CKPT:-$OOS_CHECKPOINT_DIR/Phi-4-multimodal-instruct}"
-  export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
-  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$PHI4_CKPT}"
-fi
-
-if [ "${OOS_MODEL:-}" = "sensenova_internvl" ]; then
-  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
-  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-SenseNovaSI/activate_oos.sh}"
-  export SENSENOVA_INTERNVL_CKPT="${SENSENOVA_INTERNVL_CKPT:-$OOS_CHECKPOINT_DIR/SenseNova-SI-1.5-InternVL3-8B}"
-  export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-decord}"
-  export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
-  export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
-  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_INTERNVL_CKPT}"
-fi
-
 if [ "${OOS_MODEL:-}" = "sensenova_qwen" ]; then
   OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
   export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"

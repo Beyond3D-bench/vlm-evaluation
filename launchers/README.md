@@ -6,7 +6,6 @@ This folder has one generic OOS evaluation path and small model presets.
 - `run_oos_eval.sh`: generic local runner. Select the model with `OOS_MODEL`.
 - `slurm_oos_eval.sh`: generic Slurm wrapper around `run_oos_eval.sh`.
 - `models/*.sh`: model-specific checkpoints, `lmms-eval` model names and arguments, output subdirectories, and small setup hooks.
-- `team1/*.sh`: ETH 3dv Team 1 convenience wrappers for the GB10 environment.
 
 ## Model presets
 
@@ -16,13 +15,10 @@ Pass a preset name through `OOS_MODEL`. The available presets are:
 | --- | --- |
 | `qwen3_6` | Qwen 3.6 |
 | `qwen3_vl` | Qwen3-VL |
-| `llava` | LLaVA-OneVision 1.5 |
 | `internvl` | InternVL 3.5 |
-| `phi4` | Phi-4 Multimodal |
 | `vlm3r` | VLM-3R |
 | `cambrian_p` | Cambrian-P |
 | `spatial_mllm` | Spatial-MLLM v1.1 |
-| `sensenova_internvl` | SenseNova-SI 1.5 InternVL3 8B |
 | `sensenova_qwen` | SenseNova-SI 1.3 Qwen3-VL 8B |
 
 FFmpeg:
@@ -76,7 +72,6 @@ OOS_MODEL=qwen3_vl OOS_TARGET_REFERENCE_POSITION=before bash launchers/run_oos_e
 OOS_MODEL=cambrian_p OOS_LIMIT=2 OOS_VENV=/path/to/cambrian-venv/bin/activate bash launchers/run_oos_eval.sh
 OOS_MODEL=qwen3_6 OOS_VENV=.venv/bin/activate sbatch launchers/slurm_oos_eval.sh
 OOS_MODEL=spatial_mllm OOS_VENV=.venv-SpatialMLLM/activate_oos.sh bash launchers/run_oos_eval.sh
-OOS_MODEL=sensenova_internvl OOS_VENV=.venv-SenseNovaSI/activate_oos.sh bash launchers/run_oos_eval.sh
 OOS_MODEL=sensenova_qwen OOS_VENV=.venv-SenseNovaSI/activate_oos.sh bash launchers/run_oos_eval.sh
 ```
 
@@ -92,11 +87,11 @@ Submit all model smoke tests from a login node, or select individual models:
 ```bash
 launchers/submit_oos_smoke_tests.sh
 launchers/submit_oos_smoke_tests.sh --qwen3-6
-launchers/submit_oos_smoke_tests.sh --qwen3-vl --llava --limit 1
+launchers/submit_oos_smoke_tests.sh --qwen3-vl --internvl --limit 1
 launchers/submit_oos_smoke_tests.sh --dry-run
 ```
 
-`bash launchers/run_oos_eval.sh` runs the evaluation immediately on the current machine, so use it from an interactive compute-node allocation. `sbatch launchers/slurm_oos_eval.sh` submits the same evaluation as a queued Slurm job; Slurm allocates the GPU and starts the command later. For `spatial_mllm` and the two SenseNova presets, `oos_env.sh` already selects these same model-specific virtual environments by default, so the explicit `OOS_VENV=...` above is optional.
+`bash launchers/run_oos_eval.sh` runs the evaluation immediately on the current machine, so use it from an interactive compute-node allocation. `sbatch launchers/slurm_oos_eval.sh` submits the same evaluation as a queued Slurm job; Slurm allocates the GPU and starts the command later. For `spatial_mllm` and `sensenova_qwen`, `oos_env.sh` already selects these same model-specific virtual environments by default, so the explicit `OOS_VENV=...` above is optional.
 
 Add a new model by creating `models/<preset>.sh` that sets `MODEL`, `MODEL_ARGS`, and `OUTPUT_SUBDIR`.
 

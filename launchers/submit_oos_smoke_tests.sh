@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Submit OOS smoke tests from a Slurm login node.
 # examples:
-#   launchers/submit_oos_smoke_tests.sh --qwen3-6 --llava --limit 1
+#   launchers/submit_oos_smoke_tests.sh --qwen3-6 --internvl --limit 1
 #   launchers/submit_oos_smoke_tests.sh --qwen3-6 --dry-run
 
 set -euo pipefail
@@ -14,13 +14,10 @@ OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
 DEFAULT_MODELS=(
   qwen3_6
   qwen3_vl
-  llava
   internvl
-  phi4
   vlm3r
   cambrian_p
   spatial_mllm
-  sensenova_internvl
   sensenova_qwen
 )
 
@@ -37,13 +34,10 @@ With no model flags, all smoke tests are submitted.
 Model flags:
   --qwen3-6
   --qwen3-vl
-  --llava
   --internvl
-  --phi4
   --vlm3r
   --cambrian-p
   --spatial-mllm
-  --sensenova-internvl
   --sensenova-qwen
   --all
 
@@ -54,7 +48,7 @@ Options:
 
 Examples:
   launchers/submit_oos_smoke_tests.sh --qwen3-6
-  launchers/submit_oos_smoke_tests.sh --qwen3-vl --llava --limit 1
+  launchers/submit_oos_smoke_tests.sh --qwen3-vl --internvl --limit 1
   launchers/submit_oos_smoke_tests.sh --dry-run
 EOF
 }
@@ -74,13 +68,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --qwen3-6) add_model qwen3_6 ;;
     --qwen3-vl) add_model qwen3_vl ;;
-    --llava) add_model llava ;;
     --internvl) add_model internvl ;;
-    --phi4) add_model phi4 ;;
     --vlm3r) add_model vlm3r ;;
     --cambrian-p) add_model cambrian_p ;;
     --spatial-mllm) add_model spatial_mllm ;;
-    --sensenova-internvl) add_model sensenova_internvl ;;
     --sensenova-qwen) add_model sensenova_qwen ;;
     --all)
       SELECTED_MODELS=("${DEFAULT_MODELS[@]}")

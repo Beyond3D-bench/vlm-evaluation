@@ -20,8 +20,6 @@ AVAILABLE_SIMPLE_MODELS = {}
 AVAILABLE_CHAT_TEMPLATE_MODELS = {
     "cambrian_p": "CambrianP",
     "internvl_hf": "InternVLHf",
-    "llava_onevision1_5_chat_fixed": "Llava_OneVision1_5_Chat_Fixed",
-    "phi4_multimodal_chat_fixed": "Phi4ChatFixed",
     "qwen3_5": "Qwen3_5",
     "qwen3_vl_chat_fixed": "Qwen3_VL_Chat_Fixed",
     "spatial_mllm": "SpatialMLLM",
