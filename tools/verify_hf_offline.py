@@ -15,6 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=Path("models/manifest.yaml"))
     parser.add_argument("--model", action="append", dest="models", help="Model preset to verify; repeat as needed. Defaults to all models.")
     parser.add_argument("--cache-dir", type=Path, default=None, help="Hub cache directory. Defaults to HF_HUB_CACHE or HF_HOME/hub.")
+    parser.add_argument("--require-pinned", action="store_true", help="Reject artifacts without a manifest revision.")
     return parser.parse_args()
 
 
@@ -23,7 +24,8 @@ def main() -> int:
     try:
         manifest = load_manifest(args.manifest)
         artifacts = iter_huggingface_artifacts(manifest, args.models)
-        require_pinned(artifacts)
+        if args.require_pinned:
+            require_pinned(artifacts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
 
@@ -39,11 +41,11 @@ def main() -> int:
     failures: list[str] = []
     print(f"Checking offline cache: {cache_dir}")
     for artifact in artifacts:
-        label = f"{artifact.repo_id}@{artifact.revision}"
+        label = f"{artifact.repo_id}@{artifact.revision or 'main'}"
         try:
             snapshot_path = snapshot_download(
                 repo_id=artifact.repo_id,
-                revision=artifact.revision,
+                revision=artifact.revision or "main",
                 cache_dir=cache_dir,
                 local_files_only=True,
             )

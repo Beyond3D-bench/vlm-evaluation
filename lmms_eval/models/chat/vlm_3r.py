@@ -2,7 +2,6 @@ import os
 import subprocess
 import tempfile
 import time
-from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -172,6 +171,9 @@ class VLM3R(lmms):
             "add_faster_video": False,
             "delay_load": self.delay_load,
         }
+
+        if os.environ.get("VLM3R_SIGLIP"):
+            overwrite_config["mm_vision_tower"] = os.environ["VLM3R_SIGLIP"]
 
         self.cfg_pretrained = AutoConfig.from_pretrained(pretrained)
         load_8bit_enabled = self._as_bool(load_8bit)
@@ -499,14 +501,9 @@ class VLM3R(lmms):
                     messages[last_user]["content"] = visual_content + messages[last_user].get("content", [])
         return messages
 
-    def _init_pred_history(self) -> None:
-        if not hasattr(self, "_pred_history"):
-            self._pred_history = defaultdict(dict)
-
     def generate_until(self, requests: List[Instance]) -> List[GenerationResult]:
         res: List[GenerationResult] = []
         pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
-        pred_mode = os.getenv("OOS_HISTORY_MODE", "gold").strip().lower() == "pred"
 
         total_elapsed_time = 0.0
         total_tokens = 0
@@ -515,22 +512,6 @@ class VLM3R(lmms):
             ctx, doc_to_messages, gen_kwargs, doc_id, task, split = request.args
             doc = self.task_dict[task][split][doc_id]
             messages = self._build_messages(doc_to_messages, doc)
-
-            if pred_mode:
-                self._init_pred_history()
-                traj_id = str(doc.get("trajectory_id", doc.get("source_video_id", doc.get("id"))))
-                deps = [str(x) for x in doc.get("depends_on_steps", [])]
-                generated_history = []
-                for dep_step in deps:
-                    if dep_step not in self._pred_history[traj_id]:
-                        continue
-                    q_text, a_text = self._pred_history[traj_id][dep_step]
-                    generated_history.append({"role": "user", "content": [{"type": "text", "text": q_text}]})
-                    generated_history.append({"role": "assistant", "content": [{"type": "text", "text": a_text}]})
-                if generated_history:
-                    system_msgs = [m for m in messages if m.get("role") == "system"]
-                    non_system = [m for m in messages if m.get("role") != "system"]
-                    messages = system_msgs + generated_history + non_system
 
             media, question, system_prompt = self._extract_media_and_prompt(messages)
             input_ids, attention_mask, visual_tensors, modalities, stop_str, stopping_criteria, prompt = self._prepare_generation_inputs(
@@ -583,12 +564,6 @@ class VLM3R(lmms):
             output_tokens = int(generated_ids.shape[-1])
             total_tokens += output_tokens
             total_elapsed_time += end_time - start_time
-
-            if pred_mode:
-                self._init_pred_history()
-                traj_id = str(doc.get("trajectory_id", doc.get("source_video_id", doc.get("id"))))
-                step_id = str(doc.get("step"))
-                self._pred_history[traj_id][step_id] = (str(doc.get("question", "")).strip(), output_text)
 
             self._dbg(f"[VLM-3R PROMPT]\n{prompt}")
             self._dbg(f"[VLM-3R OUTPUT]\n{output_text}")

@@ -51,6 +51,10 @@ _vlm3r_stage_file() {
 }
 
 _vlm3r_resolve_siglip_snapshot() {
+  if [ -n "${VLM3R_SIGLIP:-}" ]; then
+    printf '%s\n' "$VLM3R_SIGLIP"
+    return
+  fi
   if [ -n "${VLM3R_SIGLIP_SOURCE:-}" ]; then
     printf '%s\n' "$VLM3R_SIGLIP_SOURCE"
     return

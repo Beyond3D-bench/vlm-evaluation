@@ -29,13 +29,20 @@ source_repositories:
       - file: patches/cambrian-p-offline.patch
         workdir: .
 # Download these repositories into the standard Hugging Face Hub cache. A null
-# revision is intentionally invalid for reproducibility: it marks an artifact
-# whose exact downloaded revision still needs to be recovered and pinned.
+# revision uses main; the download tool prints the resolved snapshot commit.
 huggingface_models:
   qwen3_6:
     artifacts:
       - repo_id: Qwen/Qwen3.6-35B-A3B
         revision: null
+  qwen3_6_27b:
+    artifacts:
+      - repo_id: Qwen/Qwen3.6-27B
+        revision: 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9
+  qwen3_5_9b:
+    artifacts:
+      - repo_id: Qwen/Qwen3.5-9B
+        revision: c202236235762e1c871ad0ccb60c8ee5ba337b9a
   qwen3_vl:
     artifacts:
       - repo_id: Qwen/Qwen3-VL-8B-Instruct
@@ -50,6 +57,8 @@ huggingface_models:
         revision: 173db47dc4784f4c4cd84ad7129a4ddbb4ef7113
       - repo_id: lmms-lab/LLaVA-NeXT-Video-7B-Qwen2
         revision: 013210b3aff822f1558b166d39c1046dd109520f
+      - repo_id: google/siglip-so400m-patch14-384
+        revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
   cambrian_p:
     artifacts:
       - repo_id: nyu-visionx/Cambrian-P-7B

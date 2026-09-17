@@ -1,7 +1,6 @@
 import os
 import time
 from typing import Dict, List, Tuple
-from collections import defaultdict
 
 from loguru import logger as eval_logger
 from tqdm import tqdm
@@ -9,7 +8,6 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import gc
 import torch
-import re
 
 from lmms_eval import utils
 from lmms_eval.api.instance import GenerationResult, Instance, TokenCounts
@@ -51,10 +49,6 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
             else:
                 parts.append(str(item))
         return " | ".join(parts)
-
-    def _init_pred_history(self):
-        if not hasattr(self, "_pred_history"):
-            self._pred_history = defaultdict(dict)
 
     def _messages_from_request(
         self,
@@ -123,33 +117,6 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
 
         if "messages" in source_name:
             messages = _normalize_messages(doc_to_source(doc))
-            if os.getenv("OOS_HISTORY_MODE", "gold").strip().lower() == "pred":
-                self._init_pred_history()
-
-                traj_id = str(doc.get("trajectory_id", doc.get("source_video_id", doc.get("id"))))
-                deps = [str(x) for x in doc.get("depends_on_steps", [])]
-
-                generated_history = []
-
-                for dep_step in deps:
-                    if dep_step not in self._pred_history[traj_id]:
-                        continue
-
-                    user_msg, a_text = self._pred_history[traj_id][dep_step]
-
-                    generated_history.append(user_msg)
-                    generated_history.append({
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": str(a_text)}],
-                    })
-
-                # insert after system, before current user
-                if generated_history:
-                    if messages and messages[0]["role"] == "system":
-                        messages = [messages[0]] + generated_history + messages[1:]
-                    else:
-                        messages = generated_history + messages
-
             self._dbg(f"[MULTI-TURN] message_count_before_video={len(messages)}")
             for i, msg in enumerate(messages):
                 self._dbg(
@@ -166,7 +133,7 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
                 self._dbg(f"[CHECK] non_system_messages_before_video={len(non_system_before)}")
                 if step_no == 1:
                     self._dbg(
-                        "[CHECK] step=1 expected: no previous gold QA, only current question "
+                        "[CHECK] step=1 expected: no previous QA, only current question "
                         "(plus optional system message)."
                     )
                 else:
@@ -462,26 +429,16 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
     def generate_until(self, requests: List[Instance]) -> List[GenerationResult]:
         res: List[GenerationResult] = []
 
-        pred_mode = os.getenv("OOS_HISTORY_MODE", "gold").strip().lower() == "pred"
+        def _collate(x):
+            return x[0], x[0]
 
-        if pred_mode:
-            request_args_list = [reg.args for reg in requests]
-            chunks = [
-                request_args_list[i : i + self.batch_size]
-                for i in range(0, len(request_args_list), self.batch_size)
-            ]
-            re_ords = None
-        else:
-            def _collate(x):
-                return x[0], x[0]
-
-            re_ords = utils.Collator(
-                [reg.args for reg in requests],
-                _collate,
-                group_fn=lambda x: x[2],
-                grouping=True,
-            )
-            chunks = list(re_ords.get_batched(n=self.batch_size, batch_fn=None))
+        re_ords = utils.Collator(
+            [reg.args for reg in requests],
+            _collate,
+            group_fn=lambda x: x[2],
+            grouping=True,
+        )
+        chunks = list(re_ords.get_batched(n=self.batch_size, batch_fn=None))
         num_iters = len(chunks)
         pbar = tqdm(total=num_iters, disable=(self.rank != 0), desc="Model Responding")
 
@@ -518,108 +475,6 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
                 raw_ans = ans  # before cleaning
                 cleaned_ans = self._strip_thinking(ans)
 
-                # Store model-generated answer for later dependent steps
-                if os.getenv("OOS_HISTORY_MODE", "gold").strip().lower() == "pred":
-                    self._init_pred_history()
-
-                    request_args = chunk[i]
-                    _, doc_to_source, _, doc_id, task_name, split_name = request_args
-                    doc = self.task_dict[task_name][split_name][doc_id]
-
-                    traj_id = str(doc.get("trajectory_id", doc.get("source_video_id", doc.get("id"))))
-                    step_id = str(doc.get("step"))
-                    source_name = getattr(doc_to_source, "__name__", "")
-
-                    # if "doc_to_messages" in source_name:
-                    #     msgs = doc_to_source(doc)
-                    #     user_msg = msgs[-1]
-                    # else:
-                    #     user_msg = {
-                    #         "role": "user",
-                    #         "content": [{"type": "text", "text": doc.get("question", "")}],
-                    #     }
-
-                    # self._pred_history[traj_id][step_id] = (user_msg, cleaned_ans)       
-                    question_text = str(doc.get("question", "")).strip()
-
-                    choices = doc.get("choices") or []
-                    if choices:
-                        choice_lines = "\n".join(
-                            f"{chr(ord('A') + j)}. {choice}"
-                            for j, choice in enumerate(choices)
-                        )
-                        question_text = f"{question_text}\nOptions:\n{choice_lines}"
-
-                    user_msg = {
-                        "role": "user",
-                        "content": [{"type": "text", "text": question_text}],
-                    }
-
-
-                    def _format_answer_for_history(doc, answer_text: str) -> str:
-                        answer_text = str(answer_text).strip()
-                        qclass = str(doc.get("step_question_class", "")).strip().lower()
-                        obj_name = str(doc.get("object_a_name", "the object")).strip() or "the object"
-
-                        # Convert multiple-choice letter to semantic choice text.
-                        choices = doc.get("choices") or []
-                        if choices:
-                            letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:len(choices)]
-                            m = re.search(
-                                rf"(?:final answer|answer)?\s*[:\-]?\s*([{letters}])\b",
-                                answer_text,
-                                flags=re.I,
-                            )
-                            if m:
-                                idx = ord(m.group(1).upper()) - ord("A")
-                                if 0 <= idx < len(choices):
-                                    return str(choices[idx])
-
-                            # Also handle exact single-letter output like "B".
-                            pred = answer_text.strip().upper()
-                            if len(pred) == 1 and pred in letters:
-                                idx = ord(pred) - ord("A")
-                                if 0 <= idx < len(choices):
-                                    return str(choices[idx])
-
-                            return answer_text
-
-                        # Convert structured time/point answer to a clearer sentence.
-                        m = re.search(
-                            r"(<TIME\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+video\s+\d+>)"
-                            r"\s*;\s*Point=\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)",
-                            answer_text,
-                            flags=re.I,
-                        )
-
-                        if m:
-                            time_token = m.group(1)
-                            x = m.group(2)
-                            y = m.group(3)
-
-                            if qclass == "oos_step2_last_visible":
-                                return (
-                                    f"{obj_name} was last visible at {time_token}, "
-                                    f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
-                                )
-
-                            if qclass == "oos_step3_last_placement":
-                                return (
-                                    f"{obj_name} stopped moving at {time_token}, "
-                                    f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
-                                )
-
-                            return (
-                                f"The answer is {time_token}, at normalized image coordinates "
-                                f"(x={x}, y={y}), where x and y are in [0, 1]."
-                            )
-
-                        return answer_text
-
-
-                    history_answer = _format_answer_for_history(doc, cleaned_ans)
-                    self._pred_history[traj_id][step_id] = (user_msg, history_answer)
-
                 print("\n" + "=" * 80)
                 print(f"[RAW OUTPUT]")
                 print(raw_ans)
@@ -640,8 +495,7 @@ class Qwen3_VL_Chat_Fixed(Qwen3_VLSimple):
 
             pbar.update(1)
 
-        if re_ords is not None:
-            res = re_ords.get_original(res)
+        res = re_ords.get_original(res)
 
         avg_speed = total_tokens / total_elapsed_time if total_elapsed_time > 0 else 0.0
         log_metrics(

@@ -4,6 +4,23 @@ if [ -f .env ]; then
   source .env
   set +a
 fi
+# Online by default; compute jobs may explicitly select offline mode.
+export OOS_OFFLINE="${OOS_OFFLINE:-0}"
+case "$OOS_OFFLINE" in
+  0|1) ;;
+  *) echo "OOS_OFFLINE must be 0 or 1." >&2; return 1 ;;
+esac
+export HF_HUB_OFFLINE="$OOS_OFFLINE"
+export TRANSFORMERS_OFFLINE="$OOS_OFFLINE"
+export CAMBRIAN_P_OFFLINE="$OOS_OFFLINE"
+if [ "$OOS_OFFLINE" = "1" ]; then
+  export OOS_LOCAL_FILES_ONLY=True
+else
+  export OOS_LOCAL_FILES_ONLY=False
+fi
+export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-0}"
+export VLM3R_STAGE_TO_TMP="${VLM3R_STAGE_TO_TMP:-0}"
+
 # Required for private Hugging Face models or gated datasets.
 export HF_TOKEN="${SECRET_KEY:-${HF_TOKEN:-}}"
 # export HF_HUB_DISABLE_XET=1
@@ -13,7 +30,6 @@ export HF_TOKEN="${SECRET_KEY:-${HF_TOKEN:-}}"
 # embedding a cluster hostname or username in the public configuration.
 export OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
 export OOS_CHECKPOINT_DIR="${OOS_CHECKPOINT_DIR:-$OOS_STORAGE_ROOT/checkpoints}"
-export OOS_OVERLAY_ROOT="${OOS_OVERLAY_ROOT:-$OOS_STORAGE_ROOT/python-overlays}"
 export OOS_VENV_ROOT="${OOS_VENV_ROOT:-$OOS_STORAGE_ROOT/venvs}"
 export OOS_DATA_ROOT="${OOS_DATA_ROOT:-$OOS_STORAGE_ROOT/data}"
 export OOS_MODEL_SOURCE_DIR="${OOS_MODEL_SOURCE_DIR:-$OOS_STORAGE_ROOT}"
@@ -39,16 +55,13 @@ export HF_ENABLE_PARALLEL_LOADING="${HF_ENABLE_PARALLEL_LOADING:-true}"
 export HF_PARALLEL_LOADING_WORKERS="${HF_PARALLEL_LOADING_WORKERS:-4}"
 
 if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
-  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
-  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
-  export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-$OOS_CHECKPOINT_DIR/Spatial-MLLM-v1.1-Instruct-820K}"
+  export SPATIAL_MLLM_CKPT="${SPATIAL_MLLM_CKPT:-Diankun/Spatial-MLLM-v1.1-Instruct-820K}"
   export SPATIAL_MLLM_REPO="${SPATIAL_MLLM_REPO:-$OOS_MODEL_SOURCE_DIR/Spatial-MLLM}"
   export SPATIAL_MLLM_EXTERNAL_PATH="${SPATIAL_MLLM_EXTERNAL_PATH:-${SPATIAL_MLLM_REPO}/src/qwenvl/external}"
-  export SPATIAL_OVERLAY="${SPATIAL_OVERLAY:-$OOS_OVERLAY_ROOT/spatial-mllm-cu128}"
 
-  # Prepend in reverse priority order so the final search order is
-  # Spatial-MLLM, bundled VGGT, the dependency overlay, then the base venv.
-  for OOS_PYTHON_PATH in "$SPATIAL_OVERLAY" "$SPATIAL_MLLM_EXTERNAL_PATH" "$SPATIAL_MLLM_REPO"; do
+  # Only upstream source trees are placed on PYTHONPATH. Python dependencies
+  # come exclusively from the complete spatial-mllm CUDA 12.8 environment.
+  for OOS_PYTHON_PATH in "$SPATIAL_MLLM_EXTERNAL_PATH" "$SPATIAL_MLLM_REPO"; do
     case ":${PYTHONPATH:-}:" in
       *":${OOS_PYTHON_PATH}:"*) ;;
       *) PYTHONPATH="${OOS_PYTHON_PATH}${PYTHONPATH:+:${PYTHONPATH}}" ;;
@@ -58,7 +71,6 @@ if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
   unset OOS_PYTHON_PATH
 
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
-  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SPATIAL_MLLM_CKPT}"
   export DS_BUILD_OPS="${DS_BUILD_OPS:-0}"
   export DS_BUILD_AIO="${DS_BUILD_AIO:-0}"
   export DS_BUILD_FUSED_ADAM="${DS_BUILD_FUSED_ADAM:-0}"
@@ -68,25 +80,19 @@ if [ "${OOS_MODEL:-}" = "spatial_mllm" ]; then
 fi
 
 if [ "${OOS_MODEL:-}" = "sensenova_qwen" ]; then
-  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
-  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
-  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-$OOS_CHECKPOINT_DIR/SenseNova-SI-1.3-Qwen3-VL-8B}"
+  export SENSENOVA_QWEN_CKPT="${SENSENOVA_QWEN_CKPT:-sensenova/SenseNova-SI-1.3-Qwen3-VL-8B}"
   export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
   export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$OOS_JOB_CACHE_ROOT/triton_cache}"
   export OOS_STAGE_MODEL_TO_TMP="${OOS_STAGE_MODEL_TO_TMP:-1}"
-  export OOS_STAGE_MODEL_DIR="${OOS_STAGE_MODEL_DIR:-$SENSENOVA_QWEN_CKPT}"
 fi
 
 if [ "${OOS_MODEL:-}" = "cambrian_p" ]; then
-  OOS_REPO_DIR="${REPO_DIR:-$(pwd)}"
-  export OOS_VENV="${OOS_VENV:-${OOS_REPO_DIR}/.venv-cu128-home/bin/activate}"
-  export CAMBRIAN_OVERLAY="${CAMBRIAN_OVERLAY:-$OOS_OVERLAY_ROOT/cambrian-cu128}"
   export CAMBRIAN_P_PATH="${CAMBRIAN_P_PATH:-$OOS_MODEL_SOURCE_DIR/cambrian-p}"
   export CAMBRIAN_P_VGGT_PATH="${CAMBRIAN_P_VGGT_PATH:-${CAMBRIAN_P_PATH}/vggt}"
 
-  # Prepend in reverse priority order so the final search order is
-  # Cambrian-P, VGGT, then the lightweight dependency overlay.
-  for OOS_PYTHON_PATH in "$CAMBRIAN_OVERLAY" "$CAMBRIAN_P_VGGT_PATH" "$CAMBRIAN_P_PATH"; do
+  # Only upstream source trees are placed on PYTHONPATH. Python dependencies
+  # come exclusively from the complete Cambrian-P CUDA 12.8 environment.
+  for OOS_PYTHON_PATH in "$CAMBRIAN_P_VGGT_PATH" "$CAMBRIAN_P_PATH"; do
     case ":${PYTHONPATH:-}:" in
       *":${OOS_PYTHON_PATH}:"*) ;;
       *) PYTHONPATH="${OOS_PYTHON_PATH}${PYTHONPATH:+:${PYTHONPATH}}" ;;
@@ -96,15 +102,16 @@ if [ "${OOS_MODEL:-}" = "cambrian_p" ]; then
   unset OOS_PYTHON_PATH
 fi
 
-# OOS task behavior.
-export OOS_VENV="${OOS_VENV:-${REPO_DIR:-$(pwd)}/.venv-cu128-home/bin/activate}"
+# OOS task behavior. The common launcher resolves OOS_VENV from the selected
+# model's environment profile after this configuration is loaded.
 export OOS_DATASET_JSONL="${OOS_DATASET_JSONL:-$OOS_DATA_ROOT/vqa/sample_100_ordered_future_object_reference_next_movement_end.jsonl}"
 export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-}"
-export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-none}"          # none, gold, pred
-export LMMS_EVAL_SHUFFLE_DOCS="${LMMS_EVAL_SHUFFLE_DOCS:-0}" # keep 0 for pred mode
+# Compatibility with existing .env files: only independent questions are supported.
+export OOS_HISTORY_MODE="${OOS_HISTORY_MODE:-none}"
+export LMMS_EVAL_SHUFFLE_DOCS="${LMMS_EVAL_SHUFFLE_DOCS:-0}" # stable output order
 export OOS_NO_VIDEO_INPUT="${OOS_NO_VIDEO_INPUT:-0}"
 export OOS_CHAT_DEBUG="${OOS_CHAT_DEBUG:-1}" # set to 1 to print model prompt/media diagnostics
-export OOS_VIDEO_CONTEXT="${OOS_VIDEO_CONTEXT:-last_frame}" # prefix or last_frame
+export OOS_VIDEO_CONTEXT="${OOS_VIDEO_CONTEXT:-prefix}" # prefix or last_frame
 export OOS_MARK_ANCHOR_OBJECT="${OOS_MARK_ANCHOR_OBJECT:-1}" 
 # Position the dataset-provided target reference relative to the video: before or after.
 export OOS_TARGET_REFERENCE_POSITION="${OOS_TARGET_REFERENCE_POSITION:-after}"
@@ -121,35 +128,24 @@ export OOS_RESIZE_HEIGHT="${OOS_RESIZE_HEIGHT:-448}"
 export OOS_VIDEO_WIDTH="${OOS_VIDEO_WIDTH:-448}"
 export OOS_VIDEO_HEIGHT="${OOS_VIDEO_HEIGHT:-448}"
 
-# Step 2 and 3 tolerance
+# Step 2 and 3 tolerance if open questions are used for time and object center coordinate evaluation.
 export OOS_TIME_TOLERANCE_SEC="${OOS_TIME_TOLERANCE_SEC:-3.0}"
 export OOS_COORD_TOLERANCE_NORM="${OOS_COORD_TOLERANCE_NORM:-0.2}"
 
-# Qwen video reader. Use torchcodec on ARM/GB10; decord is often fine on x86_64.
-# export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchcodec}"
+# Qwen video reader. Options: torchvision,torchcodec,decord.
 export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-torchvision}"
 
-# VLM-3R local source, dependency overlay, LoRA adapter, and base model.
+# VLM-3R local source, LoRA adapter, and base model.
 export VLM3R_REPO="${VLM3R_REPO:-$OOS_MODEL_SOURCE_DIR/VLM-3R}"
-export VLM3R_OVERLAY="${VLM3R_OVERLAY:-$OOS_OVERLAY_ROOT/vlm3r-cu128}"
-export VLM3R_CKPT="${VLM3R_CKPT:-$HF_HOME/vlm-3r-llava-qwen2-lora}"
-export VLM3R_BASE="${VLM3R_BASE:-$HF_HOME/LLaVA-NeXT-Video-7B-Qwen2}"
+export VLM3R_CKPT="${VLM3R_CKPT:-Journey9ni/vlm-3r-llava-qwen2-lora}"
+export VLM3R_BASE="${VLM3R_BASE:-lmms-lab/LLaVA-NeXT-Video-7B-Qwen2}"
 export VLM3R_CUT3R_WEIGHTS="${VLM3R_CUT3R_WEIGHTS:-$VLM3R_REPO/CUT3R/src/cut3r_512_dpt_4_64.pth}"
 # Copy all VLM-3R checkpoints to the Slurm job's node-local 100 GB TMPDIR.
 export VLM3R_STAGE_TO_TMP="${VLM3R_STAGE_TO_TMP:-1}"
 
 # Keep TORCH_CUDNN_V8_API_DISABLED unset on Euler; enabling it makes Qwen3.5
 # inference substantially slower.
-export FFMPEG_ROOT="${FFMPEG_ROOT:-$OOS_VENV_ROOT/ffmpeg_env}"
-export FFMPEG_PATH="${FFMPEG_PATH:-$FFMPEG_ROOT/bin/ffmpeg}"
-case ":${LD_LIBRARY_PATH:-}:" in
-  *":${FFMPEG_ROOT}/lib:"*) ;;
-  *) export LD_LIBRARY_PATH="${FFMPEG_ROOT}/lib:${LD_LIBRARY_PATH:-}" ;;
-esac
-case ":${PATH:-}:" in
-  *":${FFMPEG_ROOT}/bin:"*) ;;
-  *) export PATH="${PATH}:${FFMPEG_ROOT}/bin" ;;
-esac
+export FFMPEG_PATH="${FFMPEG_PATH:-ffmpeg}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 

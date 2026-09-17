@@ -7,6 +7,7 @@ cd "$REPO_DIR"
 
 source "$LAUNCHER_DIR/common.sh"
 load_oos_env
+resolve_oos_venv
 
 if [ -n "${OOS_VENV:-}" ]; then
   VENV_ACTIVATE="$OOS_VENV"
@@ -15,15 +16,25 @@ if [ -n "${OOS_VENV:-}" ]; then
     echo "Missing virtualenv activate script: $OOS_VENV" >&2
     echo "Resolved activate script: $VENV_ACTIVATE" >&2
     echo "Current directory: $(pwd)" >&2
-    echo "Set OOS_VENV in ${OOS_ENV_FILE:-launchers/oos_env.sh} or in your shell." >&2
+    echo "Create it with tools/create_environment.py, or set OOS_VENV explicitly." >&2
     exit 1
   fi
   source "$VENV_ACTIVATE"
 fi
 
+if [ "${OOS_MODEL:-}" = "vlm3r" ]; then
+  if [ ! -s "$VLM3R_CUT3R_WEIGHTS" ]; then
+    echo "Missing CUT3R weights. Run bash setup.sh --model vlm3r on a connected machine first." >&2
+    exit 1
+  fi
+  python "$REPO_DIR/tools/build_vlm3r_curope.py"
+fi
+
 require_oos_env
+python "$REPO_DIR/tools/validate_dataset.py" "$OOS_DATASET_JSONL"
 prepare_oos_dirs
 load_oos_model_preset
+resolve_oos_checkpoint
 stage_hf_model_to_node_tmp
 
 TASK_NAME="${OOS_TASK:-oos_videoqa}"

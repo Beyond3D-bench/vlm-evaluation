@@ -9,17 +9,41 @@ fi
 LAUNCHER_DIR="${LAUNCHER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$LAUNCHER_DIR/.." && pwd)}"
 
-OOS_MODEL_PRESETS="qwen3_6 qwen3_vl internvl vlm3r cambrian_p spatial_mllm sensenova_qwen custom"
+OOS_MODEL_PRESETS="qwen3_6 qwen3_6_27b qwen3_5_9b qwen3_vl internvl vlm3r cambrian_p spatial_mllm sensenova_qwen custom"
 
 load_oos_env() {
   local env_file="${OOS_ENV_FILE:-launchers/oos_env.sh}"
   if [ ! -f "$env_file" ]; then
     echo "Missing env file: $env_file" >&2
-    echo "Use launchers/oos_env.sh as the Team 1 example config, or set OOS_ENV_FILE=/path/to/your_env.sh." >&2
+    echo "Use launchers/oos_env.sh as the example config, or set OOS_ENV_FILE=/path/to/your_env.sh." >&2
     echo "Edit it for your local cache/output/model settings." >&2
     exit 1
   fi
   source "$env_file"
+  if [ "${OOS_HISTORY_MODE:-none}" != "none" ]; then
+    echo "Only independent-question evaluation is supported. Unset OOS_HISTORY_MODE or set it to none (got '$OOS_HISTORY_MODE')." >&2
+    return 1
+  fi
+}
+
+resolve_oos_venv() {
+  if [ -n "${OOS_VENV:-}" ]; then
+    return
+  fi
+
+  local preset="${OOS_MODEL:-qwen3_6}"
+  local profile="${OOS_ENV_PROFILE:-}"
+  if [ "$preset" = "custom" ] && [ -z "$profile" ]; then
+    echo "OOS_MODEL=custom requires OOS_ENV_PROFILE or OOS_VENV." >&2
+    exit 1
+  fi
+  if [ -z "$profile" ]; then
+    profile="$(python3 "$REPO_DIR/tools/environment_profiles.py" --preset "$preset")"
+  fi
+  local directory
+  directory="$(python3 "$REPO_DIR/tools/environment_profiles.py" --profile "$profile" --field directory)"
+  export OOS_ENV_PROFILE="$profile"
+  export OOS_VENV="$OOS_VENV_ROOT/$directory/bin/activate"
 }
 
 require_oos_env() {
@@ -30,7 +54,6 @@ require_oos_env() {
     TMPDIR
     OOS_VIDEO_CACHE_DIR
     OOS_OUTPUT_DIR
-    OOS_HISTORY_MODE
     LMMS_EVAL_SHUFFLE_DOCS
     OOS_NO_VIDEO_INPUT
     OOS_CHAT_DEBUG
@@ -82,6 +105,23 @@ load_oos_model_preset() {
   fi
 
   source "$preset_file"
+}
+
+# Resolve before staging so both online downloads and manually arranged local
+# checkpoints work. Custom adapters retain control of their own loading.
+resolve_oos_checkpoint() {
+  if [ "$MODEL_PRESET" = "custom" ] || [ "$MODEL_PRESET" = "vlm3r" ]; then
+    return
+  fi
+  local pretrained resolved
+  pretrained="${OOS_PRETRAINED:-${OOS_STAGE_MODEL_DIR:-$(get_model_arg pretrained)}}"
+  local -a revision_args=()
+  if [ -n "${OOS_MODEL_REVISION:-${OOS_STAGE_MODEL_REF:-}}" ]; then
+    revision_args=(--revision "${OOS_MODEL_REVISION:-$OOS_STAGE_MODEL_REF}")
+  fi
+  resolved="$(python "$REPO_DIR/tools/resolve_checkpoint.py" "$pretrained" "${revision_args[@]}")" || return 1
+  set_model_arg pretrained "$resolved"
+  export OOS_STAGE_MODEL_DIR="$resolved"
 }
 
 set_model_arg() {
@@ -221,9 +261,12 @@ stage_hf_model_to_node_tmp() {
 print_oos_run_summary() {
   echo "Repo: $REPO_DIR"
   echo "Model preset: $MODEL_PRESET"
+  echo "Offline mode: ${OOS_OFFLINE:-0}"
+  echo "Environment profile: ${OOS_ENV_PROFILE:-custom}"
   echo "lmms-eval model: $MODEL"
   echo "Model args: $MODEL_ARGS"
   echo "Task: ${TASK_NAME:-oos_videoqa}"
+  echo "Protocol: independent questions (no answer history)"
   echo "Dataset JSONL: ${OOS_DATASET_JSONL:-unset}"
   echo "Output: $OUTPUT_PATH"
   echo "Env file: ${OOS_ENV_FILE:-launchers/oos_env.sh}"

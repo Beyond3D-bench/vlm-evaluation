@@ -9,7 +9,7 @@ import random
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -32,7 +32,6 @@ from lmms_eval.api.model import lmms
 from lmms_eval.api.reasoning import parse_reasoning_tags_config, strip_reasoning_tags
 from lmms_eval.api.task import Task
 from lmms_eval.baselines import (
-    BASELINE_REGISTRY,
     get_baseline_display_name,
     load_baseline,
 )
@@ -48,7 +47,6 @@ from lmms_eval.evaluator_utils import (
     print_writeout,
     run_task_tests,
 )
-from lmms_eval.llm_judge.launcher import get_launcher
 from lmms_eval.loggers.evaluation_tracker import EvaluationTracker
 from lmms_eval.models.model_utils.efficiency_metrics import build_efficiency_summary
 from lmms_eval.models.model_utils.usage_metrics import (
@@ -207,7 +205,6 @@ def _collect_input_media(doc: dict, request_args: list) -> list[str]:
 def simple_evaluate(
     model,
     model_args: Optional[Union[str, dict]] = None,
-    launcher_args: Optional[Union[str, dict]] = None,
     tasks: Optional[List[Union[str, dict, object]]] = None,
     num_fewshot: Optional[int] = None,
     batch_size: Optional[Union[int, str]] = None,
@@ -335,13 +332,6 @@ def simple_evaluate(
 
     if model_args is None:
         model_args = ""
-
-    if launcher_args is not None:
-        launcher_args = simple_parse_args_string(launcher_args)
-        launcher_name = launcher_args.pop("name")
-        eval_launcher = get_launcher(launcher_name)(**launcher_args)
-    else:
-        eval_launcher = None
 
     if task_manager is None:
         task_manager = TaskManager(verbosity, model_name=model)
@@ -500,7 +490,6 @@ def simple_evaluate(
             verbosity=verbosity,
             distributed_executor_backend=distributed_executor_backend,
             cli_args=cli_args,
-            eval_server_launcher=eval_launcher,
             response_cache=response_cache,
         )
         eval_succeeded = True
@@ -803,7 +792,6 @@ def evaluate(
     fewshot_as_multiturn: bool = False,
     verbosity: str = "INFO",
     distributed_executor_backend: str = "accelerate",
-    eval_server_launcher: Optional[Union[str, Callable]] = None,
     cli_args=None,
     response_cache: Optional[ResponseCache] = None,
 ):
@@ -1096,12 +1084,10 @@ def evaluate(
         live_results_handle.close()
         lm.live_result_callback = None
 
-    # Cleaning lm's cuda memory if you are launching llm as judge in local
+    # Release inference memory before scoring and aggregation.
     lm.clean()
     RANK = global_rank
     WORLD_SIZE = world_size
-    if eval_server_launcher is not None and RANK == 0:
-        eval_server_launcher.launch()
 
     if world_size > 1:
         if distributed_executor_backend == "accelerate":
@@ -1110,7 +1096,6 @@ def evaluate(
             dist.barrier()
 
     ### Postprocess outputs ###
-    # TODO: del model here, maybe (idea: allow user to specify device of e.g. reward model separately)
     for task_output in eval_tasks:
         task = task_output.task
         task.apply_filters()
@@ -1364,8 +1349,6 @@ def evaluate(
         dist.barrier()  # Ensure all processes are synced before proceeding
 
     if RANK == 0:
-        if eval_server_launcher is not None:
-            eval_server_launcher.clean()
         ### Aggregate results over all datapoints ###
         # aggregate results ; run bootstrap CIs
         for task_output in eval_tasks:

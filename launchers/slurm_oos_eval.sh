@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Submit with, for example:
 #   OOS_MODEL=qwen3_6 sbatch launchers/slurm_oos_eval.sh
-#   OOS_MODEL=cambrian_p OOS_LIMIT=2 OOS_VENV=.venv-CambrianP/bin/activate sbatch launchers/slurm_oos_eval.sh
+#   OOS_MODEL=cambrian_p OOS_LIMIT=2 sbatch launchers/slurm_oos_eval.sh
 #
 # Most clusters require editing the SBATCH account/partition/GPU lines below.
 #a100_80gb,pro_6000
@@ -17,6 +17,7 @@
 #SBATCH --error=logs/oos_videoqa_%j.err
 
 set -euo pipefail
+export OOS_OFFLINE="${OOS_OFFLINE:-1}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
 if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then

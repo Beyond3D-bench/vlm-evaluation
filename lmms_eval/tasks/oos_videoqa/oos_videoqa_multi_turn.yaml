@@ -37,6 +37,7 @@ lmms_eval_specific_kwargs:
     #system_prompt: ""
 metadata:
   version: 0.4
-  mode: multi_turn_chat_mixed
+  mode: independent_questions
+  history: none
 
 cluster_key: source_video_id

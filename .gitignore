@@ -33,6 +33,7 @@ ipython_config.py
 .env
 
 # Caches and temp
+.pytest_cache/
 **/.cache
 lm_cache
 cache_dir

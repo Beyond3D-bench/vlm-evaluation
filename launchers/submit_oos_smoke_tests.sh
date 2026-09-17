@@ -13,6 +13,8 @@ OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
 
 DEFAULT_MODELS=(
   qwen3_6
+  qwen3_6_27b
+  qwen3_5_9b
   qwen3_vl
   internvl
   vlm3r
@@ -33,6 +35,8 @@ With no model flags, all smoke tests are submitted.
 
 Model flags:
   --qwen3-6
+  --qwen3-6-27b
+  --qwen3-5-9b
   --qwen3-vl
   --internvl
   --vlm3r
@@ -67,6 +71,8 @@ add_model() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --qwen3-6) add_model qwen3_6 ;;
+    --qwen3-6-27b) add_model qwen3_6_27b ;;
+    --qwen3-5-9b) add_model qwen3_5_9b ;;
     --qwen3-vl) add_model qwen3_vl ;;
     --internvl) add_model internvl ;;
     --vlm3r) add_model vlm3r ;;
@@ -108,10 +114,12 @@ if [ "${#SELECTED_MODELS[@]}" -eq 0 ]; then
 fi
 
 cd "$REPO_DIR"
+source "$LAUNCHER_DIR/oos_env.sh"
+mkdir -p logs
 
 submit_model() {
   local model="$1"
-  local -a command=(env -u OOS_VENV "OOS_MODEL=$model" "OOS_LIMIT=$LIMIT")
+  local -a command=(env -u OOS_VENV -u OOS_ENV_PROFILE "OOS_MODEL=$model" "OOS_LIMIT=$LIMIT")
 
   case "$model" in
     vlm3r)
@@ -120,14 +128,6 @@ submit_model() {
         return 1
       fi
       command+=("VLM3R_REPO=$VLM3R_REPO")
-      ;;
-    cambrian_p)
-      command=(
-        env
-        "OOS_MODEL=$model"
-        "OOS_LIMIT=$LIMIT"
-        "OOS_VENV=${OOS_CAMBRIAN_VENV:-$OOS_STORAGE_ROOT/venvs/oos_vlm_evaluation-cu124-cambrianp/bin/activate}"
-      )
       ;;
   esac
 

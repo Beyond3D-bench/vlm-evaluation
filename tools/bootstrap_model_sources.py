@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         "--source-dir",
         type=Path,
         default=None,
-        help="External source root. Defaults to OOS_MODEL_SOURCE_DIR or .model-sources.",
+        help="External source root. Defaults to OOS_MODEL_SOURCE_DIR or $OOS_STORAGE_ROOT.",
     )
     parser.add_argument("--verify-only", action="store_true", help="Do not clone or patch; only verify the prepared trees.")
     parser.add_argument("--dry-run", action="store_true", help="Print mutating commands without running them.")
@@ -149,7 +149,7 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
 
-    source_root = args.source_dir or Path(os.environ.get("OOS_MODEL_SOURCE_DIR", ".model-sources"))
+    source_root = args.source_dir or Path(os.environ.get("OOS_MODEL_SOURCE_DIR", os.environ.get("OOS_STORAGE_ROOT", str(Path.home() / "scratch"))))
     source_root = source_root.expanduser().resolve()
     print(f"External model source root: {source_root}")
 

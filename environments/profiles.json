@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "python": "3.10",
+  "cuda": "12.8",
+  "torch": "2.7.1",
+  "torchvision": "0.22.1",
+  "profiles": {
+    "base": {
+      "directory": "base-cu128",
+      "requirements": "environments/base-cu128.in",
+      "lock": "environments/lock/base-cu128.txt",
+      "verify": {"transformers": "5.13.1", "accelerate": "1.14.0", "flash-attn": "2.8.3.post1"}
+    },
+    "cambrian-p": {
+      "directory": "cambrian-p-cu128",
+      "requirements": "environments/cambrian-p-cu128.in",
+      "lock": "environments/lock/cambrian-p-cu128.txt",
+      "verify": {"transformers": "4.37.0", "accelerate": "0.23.0"}
+    },
+    "spatial-mllm": {
+      "directory": "spatial-mllm-cu128",
+      "requirements": "environments/spatial-mllm-cu128.in",
+      "lock": "environments/lock/spatial-mllm-cu128.txt",
+      "verify": {"transformers": "4.51.3", "deepspeed": "0.19.2"}
+    },
+    "vlm3r": {
+      "directory": "vlm3r-cu128",
+      "requirements": "environments/vlm3r-cu128.in",
+      "lock": "environments/lock/vlm3r-cu128.txt",
+      "verify": {"transformers": "4.40.0.dev0", "accelerate": "0.29.3"}
+    }
+  },
+  "preset_profiles": {
+    "qwen3_6": "base",
+    "qwen3_6_27b": "base",
+    "qwen3_5_9b": "base",
+    "qwen3_vl": "base",
+    "internvl": "base",
+    "sensenova_qwen": "base",
+    "cambrian_p": "cambrian-p",
+    "spatial_mllm": "spatial-mllm",
+    "vlm3r": "vlm3r"
+  }
+}

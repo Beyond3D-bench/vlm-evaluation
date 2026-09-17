@@ -14,10 +14,18 @@ LETTER_MAP = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 DEBUG_MAX_SAMPLES = int(os.getenv("OOS_DEBUG_MAX_SAMPLES", "0"))
 
-# Controls multi-turn prompt construction.
-# gold: previous turns use gold answers when available
-# none: each step is asked independently even when mode=multi_turn
-OOS_HISTORY_MODE = os.getenv("OOS_HISTORY_MODE", "gold").strip().lower()
+def _require_independent_questions() -> None:
+    """Reject legacy modes instead of silently changing the reported protocol."""
+    mode = os.getenv("OOS_HISTORY_MODE", "none").strip().lower()
+    if mode != "none":
+        raise ValueError(
+            f"OOS_HISTORY_MODE={mode!r} is unsupported. The OOS evaluation "
+            "uses independent questions (none), as reported in the paper. "
+            "Unset OOS_HISTORY_MODE or set it to none."
+        )
+
+
+_require_independent_questions()
 
 
 OOS_TIME_TOLERANCE_SEC = float(os.getenv("OOS_TIME_TOLERANCE_SEC", "1.0"))
@@ -168,8 +176,6 @@ def _get_step4_bev_image_path(doc: Dict[str, Any]) -> Optional[str]:
     )
     return None
 
-# def _is_step2_last_visible(doc: Dict[str, Any]) -> bool:
-#     return str(doc.get("step_question_class", "")).strip().lower() == "oos_step2_last_visible"
 def _time_point_instruction(doc: Dict[str, Any]) -> str:
     # if _step23_time_only_eval():
     #     return (
@@ -550,72 +556,6 @@ def _normalize_relation_text(text: str) -> str:
     return mapping.get(text, text)
 
 
-# def _clean_prediction(text: Optional[str]) -> str:
-#     if text is None:
-#         return ""
-#     text = str(text).strip()
-
-#     final_patterns = [
-#         r"final answer\s*[:\-]\s*([A-Z])\b",
-#         r"final answer\s*[:\-]\s*(.+)",
-#         r"answer\s*[:\-]\s*([A-Z])\b",
-#         r"answer\s*[:\-]\s*(.+)",
-#     ]
-#     for pattern in final_patterns:
-#         matches = re.findall(pattern, text, flags=re.I)
-#         if matches:
-#             candidate = matches[-1].strip()
-#             candidate = candidate.splitlines()[0].strip()
-#             return candidate
-
-#     lines = [line.strip() for line in text.splitlines() if line.strip()]
-#     return lines[-1] if lines else text
-
-
-# def _extract_letter_index(pred: str, n_choices: int) -> int:
-#     pred_up = pred.upper().strip()
-#     patterns = [
-#         r"^\(?([A-Z])\)?\.?$",
-#         r"^(?:OPTION|ANSWER)\s*[:\-]?\s*([A-Z])\.?$",
-#         r"^\s*([A-Z])\s*[\)\.\:\-]\s*",
-#     ]
-#     for pattern in patterns:
-#         m = re.search(pattern, pred_up)
-#         if m:
-#             idx = LETTER_MAP.find(m.group(1))
-#             if 0 <= idx < n_choices:
-#                 return idx
-#     return -1
-
-
-# def _extract_choice_text_index(pred: str, choices: List[str]) -> int:
-#     pred_norm = _normalize_relation_text(pred)
-#     choice_norms = [_normalize_relation_text(c) for c in choices]
-
-#     for i, c in enumerate(choice_norms):
-#         if pred_norm == c:
-#             return i
-
-#     for i, c in enumerate(choice_norms):
-#         if c and c in pred_norm:
-#             return i
-
-#     for i, c in enumerate(choice_norms):
-#         if pred_norm and pred_norm in c:
-#             return i
-
-#     return -1
-
-
-# def extract_prediction_index(prediction: str, choices: List[str]) -> int:
-#     pred = _clean_prediction(prediction)
-#     idx = _extract_letter_index(pred, len(choices))
-#     if idx != -1:
-#         return idx
-#     idx = _extract_choice_text_index(pred, choices)
-#     if idx != -1:
-#         return idx
-#     return -1
 def _strip_ansi(text: str) -> str:
     """Remove terminal color/control sequences that can leak into .out logs."""
     if not text:
@@ -754,96 +694,6 @@ def extract_prediction_index(prediction: str, choices: List[str]) -> int:
 
     return -1
 
-def _step_answer_text(step_doc: Dict[str, Any]) -> Optional[str]:
-    if step_doc.get("answer") not in (None, ""):
-        return str(step_doc["answer"])
-    acceptable_answers = step_doc.get("acceptable_answers") or []
-    if acceptable_answers:
-        return str(acceptable_answers[0])
-    if step_doc.get("choices") and step_doc.get("answer_idx") is not None:
-        idx = int(step_doc["answer_idx"])
-        if 0 <= idx < len(step_doc["choices"]):
-            return str(step_doc["choices"][idx])
-    return None
-
-def _history_question_from_step(step: Dict[str, Any]) -> str:
-    question_text = str(step.get("question", "")).strip()
-
-    choices = step.get("choices") or []
-    if choices:
-        choice_lines = "\n".join(
-            f"{LETTER_MAP[i]}. {choice}"
-            for i, choice in enumerate(choices)
-        )
-        question_text = f"{question_text}\nOptions:\n{choice_lines}"
-
-    return question_text
-
-
-def _history_answer_from_step(step: Dict[str, Any], object_name: Optional[str] = None) -> str:
-    obj_name = str(object_name or "the object").strip() or "the object"
-    qclass = str(step.get("step_question_class", "")).strip().lower()
-
-    answer_text = None
-
-    if step.get("target_text") not in (None, ""):
-        answer_text = str(step["target_text"])
-    elif step.get("answer") not in (None, ""):
-        answer_text = str(step["answer"])
-    elif step.get("choices") and step.get("correct_idx") is not None:
-        choices = step.get("choices") or []
-        idx = int(step["correct_idx"])
-        if 0 <= idx < len(choices):
-            answer_text = str(choices[idx])
-    else:
-        acceptable = step.get("acceptable_answers") or []
-        if acceptable:
-            answer_text = str(acceptable[0])
-
-    if answer_text is None:
-        answer_text = ""
-
-    answer_text = str(answer_text).strip()
-
-    m = re.search(
-        r"(<TIME\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+video\s+\d+>)"
-        r"\s*;\s*Point=\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)",
-        answer_text,
-        flags=re.I,
-    )
-
-    if m:
-        time_token = m.group(1)
-        x = m.group(2)
-        y = m.group(3)
-
-        if _step23_time_only_eval():
-            if qclass == "oos_step2_last_visible":
-                return f"{obj_name} was last visible at {time_token}."
-            if qclass == "oos_step3_last_placement":
-                return f"{obj_name} stopped moving at {time_token}."
-            return time_token
-
-        if qclass == "oos_step2_last_visible":
-            return (
-                f"{obj_name} was last visible at {time_token}, "
-                f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
-            )
-
-        if qclass == "oos_step3_last_placement":
-            return (
-                f"{obj_name} stopped moving at {time_token}, "
-                f"at normalized image coordinates (x={x}, y={y}), where x and y are in [0, 1]."
-            )
-
-        return (
-            f"The answer is {time_token}, at normalized image coordinates "
-            f"(x={x}, y={y}), where x and y are in [0, 1]."
-        )
-
-    return answer_text
-
-
 def _default_open_answer_instruction() -> str:
     return "Answer briefly and directly."
 
@@ -919,181 +769,7 @@ def _normalize_single_turn_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-# def _extract_history_messages_for_step(raw_doc: Dict[str, Any], current_step: int) -> List[Dict[str, Any]]:
-#     """
-#     Return only prior completed QA turns before the current step.
 
-#     Rules:
-#     - keep system messages
-#     - for step k, keep only steps < k
-#     - never include the current step user question
-#     - never include later turns
-#     - never include orphan assistant messages
-#     """
-#     messages = raw_doc.get("gold_history_messages") or []
-
-#     system_msgs: List[Dict[str, Any]] = [
-#         msg for msg in messages if msg.get("role") == "system"
-#     ]
-
-#     if current_step <= 1:
-#         return system_msgs
-
-#     history: List[Dict[str, Any]] = []
-#     pending_user: Optional[Dict[str, Any]] = None
-#     completed_steps = 0
-
-#     for msg in messages:
-#         role = msg.get("role")
-
-#         if role == "system":
-#             continue
-
-#         if role == "user":
-#             # stop before the current step's user question
-#             if completed_steps >= current_step - 1:
-#                 break
-
-#             # replace any unfinished pending user
-#             pending_user = msg
-#             continue
-
-#         if role == "assistant":
-#             # only keep complete QA pairs
-#             if pending_user is None:
-#                 continue
-
-#             history.append(pending_user)
-#             history.append(msg)
-#             pending_user = None
-#             completed_steps += 1
-
-#             if completed_steps >= current_step - 1:
-#                 break
-
-#     return system_msgs + history
-def _extract_history_messages_for_step(raw_doc: Dict[str, Any], current_step_id: str) -> List[Dict[str, Any]]:
-    """
-    Return system messages + QA pairs for steps explicitly listed in depends_on_steps.
-    Assumes depends_on_steps already contains the full prefix the current step should see.
-    """
-    messages = raw_doc.get("gold_history_messages") or []
-
-    system_msgs = [msg for msg in messages if msg.get("role") == "system"]
-
-    steps = [s for s in raw_doc.get("steps", []) if not s.get("skipped")]
-    step_ids_in_order = [_step_id(s["step"]) for s in steps]
-
-    dep_map = {
-        _step_id(s["step"]): _normalize_dep_list(s.get("depends_on_steps"))
-        for s in steps
-    }
-    needed = set(dep_map.get(current_step_id, []))
-
-    if not needed:
-        return system_msgs
-
-    history_pairs = {}
-    pending_user = None
-    pair_index = 0
-
-    for msg in messages:
-        role = msg.get("role")
-        if role == "system":
-            continue
-        if role == "user":
-            pending_user = msg
-            continue
-        if role == "assistant" and pending_user is not None:
-            if pair_index < len(step_ids_in_order):
-                sid = step_ids_in_order[pair_index]
-                history_pairs[sid] = [pending_user, msg]
-            pending_user = None
-            pair_index += 1
-
-    history = []
-    step_by_id = {
-        _step_id(s["step"]): s
-        for s in steps
-    }
-
-    object_name = raw_doc.get("object_a_name")
-
-    for sid in step_ids_in_order:
-        if sid not in needed:
-            continue
-
-        step = step_by_id.get(sid)
-        if step is None:
-            continue
-
-        history.append({
-            "role": "user",
-            "content": [{
-                "type": "text",
-                "text": _history_question_from_step(step),
-            }],
-        })
-
-        history.append({
-            "role": "assistant",
-            "content": [{
-                "type": "text",
-                "text": _history_answer_from_step(step, object_name=object_name),
-            }],
-        })
-
-    return system_msgs + history
-
-
-# def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-#     expanded: List[Dict[str, Any]] = []
-#     common = {
-#         "trajectory_id": raw_doc.get("trajectory_id"),
-#         "source_video_id": raw_doc.get("video_id", raw_doc.get("source_video_id")),
-#         "video_id": raw_doc.get("video_id"),
-#         "video_path": _rewrite_path(raw_doc.get("video_path")),
-#         "query_time_sec": raw_doc.get("query_time_sec"),
-#         "query_time_in_clip_sec": raw_doc.get("query_time_in_clip_sec"),
-#         "clip_start_time_sec": raw_doc.get("clip_start_time_sec"),
-#         "clip_end_time_sec": raw_doc.get("clip_end_time_sec"),
-#         "clip_duration_sec": raw_doc.get("clip_duration_sec"),
-#         "horizon_sec": raw_doc.get("horizon_sec"),
-#         "object_a_assoc_id": raw_doc.get("object_a_assoc_id"),
-#         "object_a_name": raw_doc.get("object_a_name"),
-#         "generation_info": raw_doc.get("generation_info"),
-#         "include_gold_history": raw_doc.get("include_gold_history", True),
-#         "mode": "multi_turn",
-#     }
-
-#     for step in raw_doc.get("steps", []):
-#         if step.get("skipped"):
-#             continue
-
-#         step_no = int(step.get("step"))
-#         item = dict(common)
-#         item["id"] = f"{raw_doc.get('doc_id', raw_doc.get('trajectory_id'))}__step_{step_no}"
-#         item["doc_id"] = item["id"]
-#         item["step"] = step_no
-#         item["question_class"] = step.get("step_question_class", raw_doc.get("question_class", "unknown"))
-#         item["step_question_class"] = item["question_class"]
-#         item["question"] = step.get("question")
-#         item["choices"] = step.get("choices") or []
-#         item["answer_idx"] = None if step.get("correct_idx") is None else int(step["correct_idx"])
-#         item["answer"] = step.get("target_text", step.get("answer"))
-#         item["acceptable_answers"] = step.get("acceptable_answers") or []
-#         item["acceptable_answer_idxs"] = step.get("acceptable_answer_idxs") or []
-#         item["answer_metadata"] = step.get("answer_metadata")
-#         item["group_id"] = item["question_class"]
-
-#         if OOS_HISTORY_MODE == "gold" and raw_doc.get("include_gold_history", True):
-#             item["history_messages"] = _extract_history_messages_for_step(raw_doc, step_no)
-#         else:
-#             item["history_messages"] = []
-
-#         expanded.append(item)
-
-#     return expanded
 def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     expanded: List[Dict[str, Any]] = []
     common = {
@@ -1113,7 +789,6 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         "target_reference_image_path": raw_doc.get("target_reference_image_path"),
         "target_reference_steps": raw_doc.get("target_reference_steps") or [],
         "target_reference_metadata": raw_doc.get("target_reference_metadata"),
-        "include_gold_history": raw_doc.get("include_gold_history", True),
         "mode": "multi_turn",
     }
 
@@ -1132,13 +807,7 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         item["depends_on_steps"] = _normalize_dep_list(step.get("depends_on_steps"))
         item["question_class"] = step.get("step_question_class", raw_doc.get("question_class", "unknown"))
         item["step_question_class"] = item["question_class"]
-        # item["question"] = step.get("question")
-        # item["choices"] = step.get("choices") or []
-        # item["answer_idx"] = None if step.get("correct_idx") is None else int(step["correct_idx"])
-        # item["answer"] = step.get("target_text", step.get("answer"))
-        # item["acceptable_answers"] = step.get("acceptable_answers") or []
-        # item["acceptable_answer_idxs"] = step.get("acceptable_idxs") or step.get("acceptable_answer_idxs") or []
-        # item["answer_metadata"] = step.get("answer_metadata")
+
         item["question"] = step.get("question")
         item["answer_metadata"] = step.get("answer_metadata")
 
@@ -1167,27 +836,10 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
             item["acceptable_answer_idxs"] = step.get("acceptable_idxs") or step.get("acceptable_answer_idxs") or []
         item["group_id"] = item["question_class"]
 
-        if OOS_HISTORY_MODE == "gold" and raw_doc.get("include_gold_history", True):
-            item["history_messages"] = _extract_history_messages_for_step(raw_doc, step_id)
-        else:
-            item["history_messages"] = []
-
         expanded.append(item)
 
     return expanded
 
-# def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
-#     seen = set()
-#     for doc in dataset:
-#         video_path = doc.get("video_path")
-#         query_time = doc.get("query_time_sec")
-#         if not video_path or query_time is None:
-#             continue
-#         key = (video_path, float(query_time))
-#         if key in seen:
-#             continue
-#         seen.add(key)
-#         _extract_prefix_video(video_path, float(query_time))
 def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
     seen = set()
 
@@ -1253,6 +905,7 @@ def warm_video_prefix_cache(dataset: datasets.Dataset) -> None:
 
 
 def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
+    _require_independent_questions()
     expanded_rows: List[Dict[str, Any]] = []
 
     for doc in dataset:
@@ -1282,16 +935,6 @@ def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
 def _get_system_prompt(lmms_eval_specific_kwargs=None) -> str:
     kwargs = lmms_eval_specific_kwargs or {}
     return kwargs["system_prompt"]
-
-# def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
-#     if os.getenv("OOS_NO_VIDEO_INPUT", "0") == "1":
-#         return []
-#     video_path = doc.get("video_path")
-#     if not video_path:
-#         raise ValueError(f"Missing video_path for doc id={doc.get('id')}")
-#     query_time_sec = float(doc.get("query_time_sec", 0.0))
-#     prefix_path = _extract_prefix_video(video_path, query_time_sec)
-#     return [prefix_path]
 
 def oos_doc_to_visual(doc: Dict[str, Any]) -> List[str]:
     if os.getenv("OOS_NO_VIDEO_INPUT", "0") == "1":
@@ -1433,36 +1076,23 @@ def _append_target_reference(doc: Dict[str, Any], visuals: List[str]) -> List[st
 
 
 def oos_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> str:
+    _require_independent_questions()
     system_prompt = _get_system_prompt(lmms_eval_specific_kwargs)
 
     lines: List[str] = [system_prompt]
 
-    if doc.get("history_messages"):
-        lines.append("Conversation history:")
-        for msg in doc["history_messages"]:
-            role = msg.get("role", "user").upper()
-            content = msg.get("content") or []
-            text = "\n".join(part.get("text", "") for part in content if part.get("type") == "text")
-            if text.strip():
-                lines.append(f"{role}: {text}")
 
     lines.append(_question_block(doc, include_answer_instruction=True))
     return "\n\n".join(lines)
 
 
 def oos_doc_to_messages(doc: Dict[str, Any], lmms_eval_specific_kwargs=None) -> List[Dict[str, Any]]:
+    _require_independent_questions()
     system_prompt = _get_system_prompt(lmms_eval_specific_kwargs)
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
     ]
 
-    if doc.get("history_messages"):
-        for msg in doc["history_messages"]:
-            role = msg.get("role", "user")
-            content = msg.get("content") or []
-            if role == "system":
-                continue
-            messages.append({"role": role, "content": content})
 
     messages.append(
         {"role": "user", "content": [{"type": "text", "text": _question_block(doc, include_answer_instruction=True)}]}
@@ -1588,124 +1218,6 @@ def _parse_time_and_point_prediction(prediction: str) -> Dict[str, Optional[floa
         "y": point_y,
     }
 
-
-# def _score_step2_last_visible(doc: Dict[str, Any], prediction: str) -> Optional[Dict[str, Any]]:
-#     meta = doc.get("answer_metadata") or {}
-#     gold_time = meta.get("sampled_last_visible_time_sec")
-#     gold_point = meta.get("normalized_projected_pixel") or []
-
-#     if not isinstance(gold_time, (int, float)) or not isinstance(gold_point, list) or len(gold_point) < 2:
-#         return None
-
-#     parsed = _parse_time_and_point_prediction(prediction)
-#     pred_time = parsed.get("time_sec")
-#     pred_x = parsed.get("x")
-#     pred_y = parsed.get("y")
-
-#     time_ok = isinstance(pred_time, (int, float)) and abs(float(pred_time) - float(gold_time)) <= OOS_TIME_TOLERANCE_SEC
-#     coord_ok = (
-#         isinstance(pred_x, (int, float))
-#         and isinstance(pred_y, (int, float))
-#         and abs(float(pred_x) - float(gold_point[0])) <= OOS_COORD_TOLERANCE_NORM
-#         and abs(float(pred_y) - float(gold_point[1])) <= OOS_COORD_TOLERANCE_NORM
-#     )
-#     correct = float(time_ok and coord_ok)
-
-#     enriched = dict(doc)
-#     enriched["prediction"] = prediction
-#     enriched["clean_prediction"] = _clean_prediction(prediction)
-#     enriched["pred_idx"] = None
-#     enriched["pred_choice"] = None
-#     enriched["gold_idx"] = None
-#     enriched["gold_choice"] = (
-#         f"{_seconds_to_time_token(float(gold_time), video_idx=1)}; "
-#         f"Point=({_format_float(float(gold_point[0]), 4)}, {_format_float(float(gold_point[1]), 4)})"
-#     )
-#     enriched["gold_idxs"] = []
-#     enriched["gold_choices"] = [enriched["gold_choice"]]
-#     enriched["accuracy"] = correct
-#     enriched["parsed"] = all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y])
-#     enriched["scorable"] = True
-#     enriched["pred_time_sec"] = pred_time
-#     enriched["pred_point_x"] = pred_x
-#     enriched["pred_point_y"] = pred_y
-#     enriched["gold_time_sec"] = float(gold_time)
-#     enriched["gold_point_x"] = float(gold_point[0])
-#     enriched["gold_point_y"] = float(gold_point[1])
-#     enriched["time_tolerance_sec"] = OOS_TIME_TOLERANCE_SEC
-#     enriched["coord_tolerance_norm"] = OOS_COORD_TOLERANCE_NORM
-#     enriched["time_error_sec"] = None if pred_time is None else abs(float(pred_time) - float(gold_time))
-#     if pred_x is None or pred_y is None:
-#         enriched["coord_error_linf"] = None
-#     else:
-#         enriched["coord_error_linf"] = max(
-#             abs(float(pred_x) - float(gold_point[0])),
-#             abs(float(pred_y) - float(gold_point[1])),
-#         )
-#     enriched["time_within_tolerance"] = bool(time_ok)
-#     enriched["coord_within_tolerance"] = bool(coord_ok)
-#     return {"oos_score": enriched}
-# def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optional[Dict[str, Any]]:
-#     meta = doc.get("answer_metadata") or {}
-#     qclass = str(doc.get("step_question_class", "")).strip().lower()
-
-#     if qclass == "oos_step2_last_visible":
-#         gold_time = meta.get("sampled_last_visible_time_sec")
-#     elif qclass == "oos_step3_last_placement":
-#         gold_time = meta.get("last_placement_time_sec")
-#     else:
-#         return None
-
-#     gold_point = meta.get("normalized_projected_pixel") or []
-
-#     if not isinstance(gold_time, (int, float)) or not isinstance(gold_point, list) or len(gold_point) < 2:
-#         return None
-
-#     parsed = _parse_time_and_point_prediction(prediction)
-#     pred_time = parsed.get("time_sec")
-#     pred_x = parsed.get("x")
-#     pred_y = parsed.get("y")
-
-#     time_ok = isinstance(pred_time, (int, float)) and abs(float(pred_time) - float(gold_time)) <= OOS_TIME_TOLERANCE_SEC
-#     coord_ok = (
-#         isinstance(pred_x, (int, float))
-#         and isinstance(pred_y, (int, float))
-#         and abs(float(pred_x) - float(gold_point[0])) <= OOS_COORD_TOLERANCE_NORM
-#         and abs(float(pred_y) - float(gold_point[1])) <= OOS_COORD_TOLERANCE_NORM
-#     )
-#     correct = float(time_ok and coord_ok)
-
-#     enriched = dict(doc)
-#     enriched["prediction"] = prediction
-#     enriched["clean_prediction"] = _clean_prediction(prediction)
-#     enriched["pred_idx"] = None
-#     enriched["pred_choice"] = None
-#     enriched["gold_idx"] = None
-#     enriched["gold_choice"] = (
-#         f"{_seconds_to_time_token(float(gold_time), video_idx=1)}; "
-#         f"Point=({_format_float(float(gold_point[0]), 4)}, {_format_float(float(gold_point[1]), 4)})"
-#     )
-#     enriched["gold_idxs"] = []
-#     enriched["gold_choices"] = [enriched["gold_choice"]]
-#     enriched["accuracy"] = correct
-#     enriched["parsed"] = all(isinstance(v, (int, float)) for v in [pred_time, pred_x, pred_y])
-#     enriched["scorable"] = True
-#     enriched["pred_time_sec"] = pred_time
-#     enriched["pred_point_x"] = pred_x
-#     enriched["pred_point_y"] = pred_y
-#     enriched["gold_time_sec"] = float(gold_time)
-#     enriched["gold_point_x"] = float(gold_point[0])
-#     enriched["gold_point_y"] = float(gold_point[1])
-#     enriched["time_tolerance_sec"] = OOS_TIME_TOLERANCE_SEC
-#     enriched["coord_tolerance_norm"] = OOS_COORD_TOLERANCE_NORM
-#     enriched["time_error_sec"] = None if pred_time is None else abs(float(pred_time) - float(gold_time))
-#     enriched["coord_error_linf"] = None if pred_x is None or pred_y is None else max(
-#         abs(float(pred_x) - float(gold_point[0])),
-#         abs(float(pred_y) - float(gold_point[1])),
-#     )
-#     enriched["time_within_tolerance"] = bool(time_ok)
-#     enriched["coord_within_tolerance"] = bool(coord_ok)
-#     return {"oos_score": enriched}
 
 def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optional[Dict[str, Any]]:
     meta = doc.get("answer_metadata") or {}
@@ -1854,13 +1366,6 @@ def _score_time_point_open_task(doc: Dict[str, Any], prediction: str) -> Optiona
     enriched["coord_within_tolerance"] = False if best is None else bool(best["coord_ok"])
     return {"oos_score": enriched}
 
-# def oos_process_results(doc: Dict[str, Any], results) -> Dict[str, Any]:
-#     prediction = results[0] if isinstance(results, (list, tuple)) else results
-
-#     if _is_step2_last_visible(doc):
-#         structured_result = _score_step2_last_visible(doc, prediction)
-#         if structured_result is not None:
-#             return structured_result
 def oos_process_results(doc: Dict[str, Any], results) -> Dict[str, Any]:
     prediction = results[0] if isinstance(results, (list, tuple)) else results
 
@@ -1936,27 +1441,6 @@ def oos_process_results(doc: Dict[str, Any], results) -> Dict[str, Any]:
     enriched["scorable"] = False
     return {"oos_score": enriched}
 
-# def _aggregate_step_metrics(scored: pd.DataFrame) -> Dict[str, float]:
-#     output: Dict[str, float] = {}
-
-#     required_cols = {"mode", "step", "accuracy"}
-#     if not required_cols.issubset(scored.columns):
-#         return output
-
-#     step_df = scored[scored["mode"] == "multi_turn"].copy()
-#     step_df = step_df.dropna(subset=["step"])
-#     if len(step_df) == 0:
-#         return output
-
-#     step_df["step"] = step_df["step"].astype(int)
-
-#     per_step = step_df.groupby("step")["accuracy"].mean().sort_index()
-#     for step, acc in per_step.items():
-#         output[f"step_{int(step)}_accuracy"] = float(acc)
-
-#     output["step_macro_avg"] = float(per_step.mean())
-#     output["multi_turn_step_count"] = int(len(step_df))
-#     return output
 def _aggregate_step_metrics(scored: pd.DataFrame) -> Dict[str, float]:
     output: Dict[str, float] = {}
 

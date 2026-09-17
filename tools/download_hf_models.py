@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", action="append", dest="models", help="Model preset to download; repeat as needed. Defaults to all models.")
     parser.add_argument("--cache-dir", type=Path, default=None, help="Hub cache directory. Defaults to HF_HUB_CACHE or HF_HOME/hub.")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--require-pinned", action="store_true", help="Reject artifacts without a manifest revision.")
     return parser.parse_args()
 
 
@@ -24,7 +25,8 @@ def main() -> int:
     try:
         manifest = load_manifest(args.manifest)
         artifacts = iter_huggingface_artifacts(manifest, args.models)
-        require_pinned(artifacts)
+        if args.require_pinned:
+            require_pinned(artifacts)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
 
@@ -38,16 +40,16 @@ def main() -> int:
         from huggingface_hub import snapshot_download
 
     for artifact in artifacts:
-        print(f"[{artifact.model}] {artifact.repo_id}@{artifact.revision}")
+        print(f"[{artifact.model}] {artifact.repo_id}@{artifact.revision or 'main'}")
         if args.dry_run:
             continue
         snapshot_path = snapshot_download(
             repo_id=artifact.repo_id,
-            revision=artifact.revision,
+            revision=artifact.revision or "main",
             cache_dir=cache_dir,
             token=os.environ.get("HF_TOKEN"),
         )
-        print(f"  cached at {snapshot_path}")
+        print(f"  cached at {snapshot_path} (commit {Path(snapshot_path).name})")
     return 0
 
 
