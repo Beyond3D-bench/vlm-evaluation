@@ -29,6 +29,7 @@ def test_setup_dry_run_does_not_create_storage(tmp_path):
     assert not storage.exists()
     assert output.count('--profile base') == 1
     assert '--model vlm3r' in output
+    assert 'resolve_oos_dataset.py' in output
     assert 'prepare_cut3r.py' in output
 
 
@@ -80,7 +81,7 @@ def test_html_download_is_rejected(tmp_path):
 
 def test_downloader_allows_main_but_strict_mode_rejects_it():
     command = [sys.executable, str(ROOT / 'tools/download_hf_models.py'),
-               '--model', 'qwen3_6', '--dry-run']
+               '--model', 'qwen3_6_35b_a3b', '--dry-run']
     result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert 'Qwen/Qwen3.6-35B-A3B@main' in result.stdout

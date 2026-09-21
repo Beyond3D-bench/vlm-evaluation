@@ -33,6 +33,10 @@ fi
 export LD_LIBRARY_PATH="${VLM3R_CUDNN_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export VLM3R_CUDNN_LIB
 
+# CUT3R's pinned checkpoint contains trusted OmegaConf objects and its upstream
+# loader relies on the pre-PyTorch-2.6 torch.load default.
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+
 # Keep the official sources ahead of this repository. All dependencies are
 # supplied by the complete VLM-3R CUDA 12.8 environment.
 for OOS_PYTHON_PATH in \

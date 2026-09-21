@@ -1,12 +1,47 @@
 cff-version: 1.2.0
-message: "Cite this repository for the OOS evaluation implementation and the upstream lmms-eval article below for the evaluation framework."
-title: "OOS VLM Evaluation"
+message: "Please cite the Long Time No See paper in preferred-citation when using this code or benchmark. The upstream lmms-eval framework is credited in references."
+title: "Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos — Evaluation Code"
 type: software
 authors:
   - family-names: "Ma"
     given-names: "Fangzhou"
+  - family-names: "Ban"
+    given-names: "Ivo Alexander"
+  - family-names: "Homburg"
+    given-names: "Eren"
+  - family-names: "Goletto"
+    given-names: "Gabriele"
+  - family-names: "Pautrat"
+    given-names: "Rémi"
+  - family-names: "Rad"
+    given-names: "Mahdi"
+  - family-names: "Plizzari"
+    given-names: "Chiara"
+  - family-names: "Pollefeys"
+    given-names: "Marc"
 url: "https://github.com/Zoulution/oos_vlm_evaluation"
 repository-code: "https://github.com/Zoulution/oos_vlm_evaluation"
+preferred-citation:
+  type: article
+  title: "Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos"
+  year: 2026
+  authors:
+    - family-names: "Ma"
+      given-names: "Fangzhou"
+    - family-names: "Ban"
+      given-names: "Ivo Alexander"
+    - family-names: "Homburg"
+      given-names: "Eren"
+    - family-names: "Goletto"
+      given-names: "Gabriele"
+    - family-names: "Pautrat"
+      given-names: "Rémi"
+    - family-names: "Rad"
+      given-names: "Mahdi"
+    - family-names: "Plizzari"
+      given-names: "Chiara"
+    - family-names: "Pollefeys"
+      given-names: "Marc"
 references:
   - type: article
     title: "LMMs-Eval: Reality Check on the Evaluation of Large Multimodal Models"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Submit OOS smoke tests from a Slurm login node.
 # examples:
-#   launchers/submit_oos_smoke_tests.sh --qwen3-6 --internvl --limit 1
-#   launchers/submit_oos_smoke_tests.sh --qwen3-6 --dry-run
+#   launchers/submit_oos_smoke_tests.sh --qwen3-6-35b-a3b --internvl --limit 1
+#   launchers/submit_oos_smoke_tests.sh --qwen3-6-35b-a3b --dry-run
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ SLURM_LAUNCHER="$LAUNCHER_DIR/slurm_oos_eval.sh"
 OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
 
 DEFAULT_MODELS=(
-  qwen3_6
+  qwen3_6_35b_a3b
   qwen3_6_27b
   qwen3_5_9b
   qwen3_vl
@@ -34,7 +34,7 @@ Usage: launchers/submit_oos_smoke_tests.sh [model flags] [options]
 With no model flags, all smoke tests are submitted.
 
 Model flags:
-  --qwen3-6
+  --qwen3-6-35b-a3b
   --qwen3-6-27b
   --qwen3-5-9b
   --qwen3-vl
@@ -51,7 +51,7 @@ Options:
   -h, --help   Show this help
 
 Examples:
-  launchers/submit_oos_smoke_tests.sh --qwen3-6
+  launchers/submit_oos_smoke_tests.sh --qwen3-6-35b-a3b
   launchers/submit_oos_smoke_tests.sh --qwen3-vl --internvl --limit 1
   launchers/submit_oos_smoke_tests.sh --dry-run
 EOF
@@ -70,7 +70,7 @@ add_model() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --qwen3-6) add_model qwen3_6 ;;
+    --qwen3-6-35b-a3b) add_model qwen3_6_35b_a3b ;;
     --qwen3-6-27b) add_model qwen3_6_27b ;;
     --qwen3-5-9b) add_model qwen3_5_9b ;;
     --qwen3-vl) add_model qwen3_vl ;;

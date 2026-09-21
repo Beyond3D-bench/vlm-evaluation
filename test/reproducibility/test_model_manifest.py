@@ -65,7 +65,7 @@ def test_new_qwen_assets_are_pinned(model: str, repo_id: str, revision: str) -> 
 
 def test_unresolved_revision_is_rejected() -> None:
     manifest = load_manifest(MANIFEST_PATH)
-    artifacts = iter_huggingface_artifacts(manifest, ["qwen3_6"])
+    artifacts = iter_huggingface_artifacts(manifest, ["qwen3_6_35b_a3b"])
 
     with pytest.raises(ValueError, match="do not have pinned revisions"):
         require_pinned(artifacts)

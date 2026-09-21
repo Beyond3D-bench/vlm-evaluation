@@ -38,7 +38,7 @@ def test_missing_absolute_directory_does_not_become_hub_id(tmp_path):
 
 
 @pytest.mark.parametrize('offline', ['0', '1'])
-@pytest.mark.parametrize('preset', ['qwen3_vl', 'qwen3_6', 'qwen3_5_9b', 'qwen3_6_27b', 'internvl', 'cambrian_p', 'spatial_mllm', 'sensenova_qwen'])
+@pytest.mark.parametrize('preset', ['qwen3_vl', 'qwen3_6_35b_a3b', 'qwen3_5_9b', 'qwen3_6_27b', 'internvl', 'cambrian_p', 'spatial_mllm', 'sensenova_qwen'])
 def test_presets_respect_loading_mode_without_forcing_staging(tmp_path, offline, preset):
     env = {'PATH': os.environ['PATH'], 'HOME': str(tmp_path), 'OOS_MODEL': preset, 'OOS_OFFLINE': offline, 'REPO_DIR': str(ROOT), 'LAUNCHER_DIR': str(ROOT / 'launchers')}
     script = '''set -eu
@@ -88,12 +88,14 @@ def test_vlm3r_local_overrides_survive_preset_loading(tmp_path):
 source "$LAUNCHER_DIR/oos_env.sh"
 source "$LAUNCHER_DIR/common.sh"
 load_oos_model_preset
-printf '%s\\n' "$MODEL_ARGS"
+printf '%s\\n' "$MODEL_ARGS" "$TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"
 '''
-    output = subprocess.check_output(['bash', '-c', script], cwd=tmp_path, env=env, text=True)
-    assert f'pretrained={checkpoint}' in output
-    assert f'model_base={base}' in output
-    assert 'for_get_frames_num=8' in output
+    output = subprocess.check_output(['bash', '-c', script], cwd=tmp_path, env=env, text=True).splitlines()
+    model_args, weights_only_compat = output[-2:]
+    assert f'pretrained={checkpoint}' in model_args
+    assert f'model_base={base}' in model_args
+    assert 'for_get_frames_num=8' in model_args
+    assert weights_only_compat == '1'
 
 
 def test_offline_missing_snapshot_does_not_retry_online():

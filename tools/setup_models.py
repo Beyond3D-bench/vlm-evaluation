@@ -59,6 +59,8 @@ def main():
     # uv is also used to create Python environments on machines without Python 3.10.
     run([sys.executable, ROOT / 'tools/create_environment.py',
          *[arg for profile in profiles for arg in ('--profile', profile)]])
+    if 'vlm3r' in models:
+        run([sys.executable, ROOT / 'tools/install_cuda_toolkit.py'])
     python = venv_root / manifest['profiles'][profiles[0]]['directory'] / 'bin/python'
     sources = [model for model in models if model in ('cambrian_p', 'spatial_mllm', 'vlm3r')]
     if sources:
@@ -66,6 +68,9 @@ def main():
              *[arg for model in sources for arg in ('--model', model)]])
     run([python, ROOT / 'tools/download_hf_models.py',
          *[arg for model in models for arg in ('--model', model)]])
+    # Benchmark data is deliberately prepared here, on the connected setup host.
+    # Evaluation launchers resolve this same snapshot with local_files_only=True.
+    run([python, ROOT / 'tools/resolve_oos_dataset.py'])
     if 'vlm3r' in models:
         vlm_python = venv_root / manifest['profiles']['vlm3r']['directory'] / 'bin/python'
         run([vlm_python, ROOT / 'tools/prepare_cut3r.py'])

@@ -52,12 +52,6 @@ def _step_id(x: Any) -> str:
     return str(x).strip()
 
 
-def _normalize_dep_list(dep_list: Optional[List[Any]]) -> List[str]:
-    if not dep_list:
-        return []
-    return [_step_id(x) for x in dep_list]
-
-
 def _step_sort_key(step: Any):
     s = str(step).strip()
     m = re.match(r"^(\d+)([A-Za-z]*)$", s)
@@ -804,7 +798,6 @@ def _expand_multi_turn_doc(raw_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         item["doc_id"] = item["id"]
         item["step"] = step_id
         item["branch_group"] = step.get("branch_group")
-        item["depends_on_steps"] = _normalize_dep_list(step.get("depends_on_steps"))
         item["question_class"] = step.get("step_question_class", raw_doc.get("question_class", "unknown"))
         item["step_question_class"] = item["question_class"]
 

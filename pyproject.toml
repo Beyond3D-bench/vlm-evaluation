@@ -10,12 +10,19 @@ name = "lmms_eval"
 version = "0.7.1"
 authors = [
     { name = "Fangzhou Ma" },
+    { name = "Ivo Alexander Ban" },
+    { name = "Eren Homburg" },
+    { name = "Gabriele Goletto" },
+    { name = "Rémi Pautrat" },
+    { name = "Mahdi Rad" },
+    { name = "Chiara Plizzari" },
+    { name = "Marc Pollefeys" },
     { name = "LMMMs-Lab Evaluation Team", email = "lmms-lab@outlook.com" },
 ]
-description = "OOS video question-answering evaluation, based on lmms-eval"
+description = "Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos — evaluation code based on lmms-eval"
 readme = "README.md"
 license = "MIT AND Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "LICENSES/MIT.txt", "LICENSES/Apache-2.0.txt", "LICENSES/lmms-eval.txt"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -29,6 +36,7 @@ dependencies = [
     "datasets>=2.19.0",
     "evaluate>=0.4.0",
     "httpx>=0.23.3",
+    "imageio-ffmpeg==0.6.0",
     "jsonlines",
     "aiohttp",
     "numexpr",
@@ -80,7 +88,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 video = [
-    "torchcodec>=0.3.0",
+    "torchcodec==0.5",
 ]
 video-legacy = [
     "decord; platform_system != 'Darwin'",

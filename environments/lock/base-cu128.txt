@@ -83,6 +83,7 @@ distlib==0.4.3
     # via virtualenv
 einops==0.8.2
     # via
+    #   fla-core
     #   flash-attn
     #   lmms-eval
 et-xmlfile==2.0.0
@@ -98,7 +99,13 @@ filelock==3.32.6
     #   python-discovery
     #   torch
     #   virtualenv
+fla-core==0.5.2
+    # via
+    #   -r environments/base-cu128.in
+    #   flash-linear-attention
 flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
+    # via -r environments/base-cu128.in
+flash-linear-attention==0.5.2
     # via -r environments/base-cu128.in
 frozenlist==1.8.0
     # via
@@ -154,6 +161,8 @@ idna==3.19
     #   httpx2
     #   requests
     #   yarl
+imageio-ffmpeg==0.6.0
+    # via lmms-eval
 isort==9.0.1
     # via lmms-eval
 jinja2==3.1.6
@@ -455,8 +464,10 @@ torch==2.7.1+cu128
     #   sentence-transformers
     #   timm
     #   torchvision
-torchcodec==0.11.1+cu128
-    # via lmms-eval
+torchcodec @ https://download.pytorch.org/whl/cpu/torchcodec-0.5-cp310-cp310-manylinux_2_28_x86_64.whl
+    # via
+    #   -r environments/base-cu128.in
+    #   lmms-eval
 torchvision==0.22.1+cu128
     # via
     #   -c environments/cuda128.constraints.txt
@@ -477,6 +488,7 @@ tqdm-multiprocess==0.0.11
 transformers==5.13.1
     # via
     #   -r environments/base-cu128.in
+    #   flash-linear-attention
     #   lmms-eval
     #   peft
     #   sentence-transformers

@@ -39,7 +39,6 @@ def question():
         'choices': ['00:00:01', '00:00:02'], 'answer_idx': 0,
         'history_messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': 'PRIOR_ANSWER_SENTINEL'}]}],
         'gold_history_messages': [{'role': 'assistant', 'content': 'GOLD_SENTINEL'}],
-        'depends_on_steps': ['1'],
     }
 
 
@@ -66,13 +65,12 @@ def test_expansion_preserves_reporting_metadata_without_history(task):
         'steps': [
             {'step': '1', 'question': 'Earlier?', 'target_text': 'SECRET_EARLIER_ANSWER'},
             {'step': '2', 'question': 'Now?', 'choices': ['Yes', 'No'], 'correct_idx': 0,
-             'depends_on_steps': ['1'], 'branch_group': 'branch'},
+             'branch_group': 'branch'},
         ],
     }
     docs = task._expand_multi_turn_doc(row)
     assert len(docs) == 2
     assert docs[1]['trajectory_id'] == 'trajectory'
-    assert docs[1]['depends_on_steps'] == ['1']
     assert docs[1]['branch_group'] == 'branch'
     prompt = task.oos_doc_to_text(docs[1], {'system_prompt': 'System'})
     assert 'SECRET_EARLIER_ANSWER' not in prompt

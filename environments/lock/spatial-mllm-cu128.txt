@@ -159,6 +159,8 @@ idna==3.19
     #   httpx2
     #   requests
     #   yarl
+imageio-ffmpeg==0.6.0
+    # via lmms-eval
 isort==9.0.1
     # via lmms-eval
 jinja2==3.1.6

@@ -9,7 +9,7 @@ fi
 LAUNCHER_DIR="${LAUNCHER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$LAUNCHER_DIR/.." && pwd)}"
 
-OOS_MODEL_PRESETS="qwen3_6 qwen3_6_27b qwen3_5_9b qwen3_vl internvl vlm3r cambrian_p spatial_mllm sensenova_qwen custom"
+OOS_MODEL_PRESETS="qwen3_6_35b_a3b qwen3_6_27b qwen3_5_9b qwen3_vl internvl vlm3r cambrian_p spatial_mllm sensenova_qwen custom"
 
 load_oos_env() {
   local env_file="${OOS_ENV_FILE:-launchers/oos_env.sh}"
@@ -31,7 +31,7 @@ resolve_oos_venv() {
     return
   fi
 
-  local preset="${OOS_MODEL:-qwen3_6}"
+  local preset="${OOS_MODEL:-qwen3_6_35b_a3b}"
   local profile="${OOS_ENV_PROFILE:-}"
   if [ "$preset" = "custom" ] && [ -z "$profile" ]; then
     echo "OOS_MODEL=custom requires OOS_ENV_PROFILE or OOS_VENV." >&2
@@ -79,7 +79,6 @@ require_oos_env() {
 prepare_oos_dirs() {
   mkdir -p \
     logs \
-    outputs/oos_videoqa \
     "$HF_HOME" \
     "$HF_DATASETS_CACHE" \
     "$LMMS_EVAL_CACHE" \
@@ -89,7 +88,7 @@ prepare_oos_dirs() {
 }
 
 load_oos_model_preset() {
-  MODEL_PRESET="${OOS_MODEL:-qwen3_6}"
+  MODEL_PRESET="${OOS_MODEL:-qwen3_6_35b_a3b}"
 
   if [ "$MODEL_PRESET" = "custom" ]; then
     MODEL="${OOS_LMMS_MODEL:?Set OOS_LMMS_MODEL when OOS_MODEL=custom.}"

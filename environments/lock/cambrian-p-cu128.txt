@@ -163,6 +163,8 @@ idna==3.19
     #   yarl
 imageio==2.37.3
     # via -r environments/cambrian-p-cu128.in
+imageio-ffmpeg==0.6.0
+    # via lmms-eval
 importlib-metadata==9.0.1
     # via diffusers
 iopath==0.1.10

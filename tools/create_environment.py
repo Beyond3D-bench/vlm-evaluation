@@ -5,6 +5,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -62,6 +63,12 @@ def main() -> int:
             [uv, "pip", "sync", str(profile.lock), "--python", str(interpreter), "--torch-backend", "cu128"],
             dry_run=args.dry_run,
         )
+        if name == "base":
+            run(
+                [sys.executable, str(REPO_ROOT / "tools" / "build_ffmpeg_shared.py"),
+                 "--prefix", str(target / "ffmpeg-shared")],
+                dry_run=args.dry_run,
+            )
         run([str(interpreter), str(REPO_ROOT / "tools" / "verify_environment.py"), "--profile", name], dry_run=args.dry_run)
     return 0
 

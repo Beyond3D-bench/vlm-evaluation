@@ -9,7 +9,7 @@
       "directory": "base-cu128",
       "requirements": "environments/base-cu128.in",
       "lock": "environments/lock/base-cu128.txt",
-      "verify": {"transformers": "5.13.1", "accelerate": "1.14.0", "flash-attn": "2.8.3.post1"}
+      "verify": {"transformers": "5.13.1", "accelerate": "1.14.0", "flash-attn": "2.8.3.post1", "flash-linear-attention": "0.5.2", "fla-core": "0.5.2"}
     },
     "cambrian-p": {
       "directory": "cambrian-p-cu128",
@@ -31,7 +31,7 @@
     }
   },
   "preset_profiles": {
-    "qwen3_6": "base",
+    "qwen3_6_35b_a3b": "base",
     "qwen3_6_27b": "base",
     "qwen3_5_9b": "base",
     "qwen3_vl": "base",
