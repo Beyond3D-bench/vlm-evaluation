@@ -51,6 +51,10 @@ plus **1,000 visible controls** for the visibility question. Geometry-aware visi
 tracks and manual inspection establish that the out-of-sight targets are no longer
 observable at query time.
 
+This repository contains the evaluation code. The code used to construct
+BEYOND3D is available in the [benchmark-construction repository](https://github.com/placeholder/beyond3d-construction)
+(temporary link).
+
 <a id="results"></a>
 
 ## 📊 Results at a glance
