@@ -1,0 +1,9 @@
+-e .[video-legacy]
+decord==0.6.0
+deepspeed==0.19.2
+hjson==3.1.0
+huggingface-hub==0.36.2
+ninja==1.13.0
+py-cpuinfo==9.0.0
+tokenizers==0.21.4
+transformers==4.51.3

@@ -1,0 +1,50 @@
+diff --git a/cambrianp/model/builder.py b/cambrianp/model/builder.py
+index 9e2d3af..351c138 100755
+--- a/cambrianp/model/builder.py
++++ b/cambrianp/model/builder.py
+@@ -228,9 +228,18 @@ def load_from_hf(repo_id, filename, subfolder=None):
+                     llava_cfg = LlavaQwenConfig.from_pretrained(model_path)
+                     
+                     if "cambrian" in model_path.lower():
+-                        # start to cast the config to LlavaQwenConfig
+-                        from cambrianp.utils import cast_cambrian_config_to_llava_ov_style
+-                        llava_cfg = cast_cambrian_config_to_llava_ov_style(llava_cfg, model_path)
++                        if os.getenv("CAMBRIAN_P_OFFLINE", "0") == "1":
++                            # Cambrian-P checkpoints already contain the complete
++                            # LlavaQwenConfig. Avoid the upstream compatibility cast,
++                            # which otherwise downloads a LLaVA-OneVision config.
++                            rank0_print(
++                                "[cambrian-offline] Using the local Cambrian-P checkpoint config "
++                                "without a Hugging Face compatibility lookup."
++                            )
++                        else:
++                            # start to cast the config to LlavaQwenConfig
++                            from cambrianp.utils import cast_cambrian_config_to_llava_ov_style
++                            llava_cfg = cast_cambrian_config_to_llava_ov_style(llava_cfg, model_path)
+                     
+                     if overwrite_config is not None:
+                         rank0_print(f"Overwriting config with {overwrite_config}")
+diff --git a/cambrianp/model/multimodal_encoder/siglip_encoder.py b/cambrianp/model/multimodal_encoder/siglip_encoder.py
+index a257ad6..cac2719 100755
+--- a/cambrianp/model/multimodal_encoder/siglip_encoder.py
++++ b/cambrianp/model/multimodal_encoder/siglip_encoder.py
+@@ -565,7 +565,18 @@ def load_model(self, device_map=None):
+             rank0_print("{} is already loaded, `load_model` called again, skipping.".format(self.vision_tower_name))
+             return
+ 
+-        self.vision_tower = SigLipVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
++        if os.getenv("CAMBRIAN_P_OFFLINE", "0") == "1":
++            # The Cambrian-P checkpoint contains the complete vision-tower state
++            # under model.vision_tower.vision_tower.*. Build its architecture from
++            # the bundled SigLip config and let the parent checkpoint loader fill
++            # those weights, instead of downloading Google's standalone model.
++            rank0_print(
++                "[cambrian-offline] Initializing SigLIP from the bundled config; "
++                "weights will be loaded from the local Cambrian-P checkpoint."
++            )
++            self.vision_tower = SigLipVisionModel(self.config)
++        else:
++            self.vision_tower = SigLipVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
+ 
+         del self.vision_tower.vision_model.encoder.layers[-1:]
+         self.vision_tower.vision_model.head = nn.Identity()

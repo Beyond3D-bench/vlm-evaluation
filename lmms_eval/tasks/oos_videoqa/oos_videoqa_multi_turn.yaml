@@ -1,0 +1,43 @@
+task: oos_videoqa
+tag: custom_videoqa
+
+dataset_path: json
+dataset_kwargs:
+  data_files:
+    test: ${OOS_DATASET_JSONL}
+
+
+
+test_split: test
+
+output_type: generate_until
+
+process_docs: !function utils.process_docs
+doc_to_visual: !function utils.oos_doc_to_visual
+doc_to_text: !function utils.oos_doc_to_text
+doc_to_messages: !function utils.oos_doc_to_messages_with_visuals
+doc_to_target: "answer"
+process_results: !function utils.oos_process_results
+
+generation_kwargs:
+  max_new_tokens: 4
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+
+metric_list:
+  - metric: oos_score
+    aggregation: !function utils.oos_aggregate_results
+    higher_is_better: true
+
+lmms_eval_specific_kwargs:
+  default:
+    system_prompt: "You are a helpful assistant trained to answer spatial and visual questions based on egocentric videos. The videos are captured from a first-person perspective and may contain various objects and interactions. Use the video to answer the question. The video is sampled at 1 frame per second."
+    #system_prompt: ""
+metadata:
+  version: 0.4
+  mode: independent_questions
+  history: none
+
+cluster_key: source_video_id

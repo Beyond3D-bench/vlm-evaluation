@@ -1,0 +1,73 @@
+version: 1
+
+# Public source trees used by adapters that cannot load entirely through
+# Transformers. Bootstrap tooling clones these outside this repository.
+source_repositories:
+  vlm3r:
+    url: https://github.com/VITA-Group/VLM-3R.git
+    directory: VLM-3R
+    revision: 206afd0ece4369457fb3c5c7781a6735fd2bbe8c
+    submodules:
+      CUT3R: 51244364af3566d6473559f71a81b4accc75c424
+    patches:
+      - file: patches/vlm3r-low-memory-loading.patch
+        workdir: .
+      - file: patches/vlm3r-cut3r-weight-path.patch
+        workdir: .
+      - file: patches/cut3r-curope-torch2-scalar-type.patch
+        workdir: CUT3R
+  spatial_mllm:
+    url: https://github.com/THU-SI/Spatial-MLLM.git
+    directory: Spatial-MLLM
+    revision: 9fc47382c7bc5ab52951e6e2e64db08fca0948ee
+    patches: []
+  cambrian_p:
+    url: https://github.com/cambrian-mllm/cambrian-p.git
+    directory: cambrian-p
+    revision: b3c15527a9f9c4b70020b874eab66f67b2b03901
+    patches:
+      - file: patches/cambrian-p-offline.patch
+        workdir: .
+# Download these repositories into the standard Hugging Face Hub cache. A null
+# revision uses main; the download tool prints the resolved snapshot commit.
+huggingface_models:
+  qwen3_6_35b_a3b:
+    artifacts:
+      - repo_id: Qwen/Qwen3.6-35B-A3B
+        revision: null
+  qwen3_6_27b:
+    artifacts:
+      - repo_id: Qwen/Qwen3.6-27B
+        revision: 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9
+  qwen3_5_9b:
+    artifacts:
+      - repo_id: Qwen/Qwen3.5-9B
+        revision: c202236235762e1c871ad0ccb60c8ee5ba337b9a
+  qwen3_vl:
+    artifacts:
+      - repo_id: Qwen/Qwen3-VL-8B-Instruct
+        revision: null
+  internvl:
+    artifacts:
+      - repo_id: OpenGVLab/InternVL3_5-8B-HF
+        revision: 741a7d03020411e666c6109218ab71e08151ef86
+  vlm3r:
+    artifacts:
+      - repo_id: Journey9ni/vlm-3r-llava-qwen2-lora
+        revision: 173db47dc4784f4c4cd84ad7129a4ddbb4ef7113
+      - repo_id: lmms-lab/LLaVA-NeXT-Video-7B-Qwen2
+        revision: 013210b3aff822f1558b166d39c1046dd109520f
+      - repo_id: google/siglip-so400m-patch14-384
+        revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
+  cambrian_p:
+    artifacts:
+      - repo_id: nyu-visionx/Cambrian-P-7B
+        revision: d219bdf9c83ec63424f51f4b26be424c94211b3b
+  spatial_mllm:
+    artifacts:
+      - repo_id: Diankun/Spatial-MLLM-v1.1-Instruct-820K
+        revision: 89ac646b88effaa651d304a308bf6e543c305f0c
+  sensenova_qwen:
+    artifacts:
+      - repo_id: sensenova/SenseNova-SI-1.3-Qwen3-VL-8B
+        revision: a6328154b47faa7dc349a4f56477db00bff1ad1f

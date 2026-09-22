@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+MODEL="${OOS_LMMS_MODEL:-internvl_hf}"
+INTERNVL_MODEL_ID="${OOS_INTERNVL_MODEL_ID:-OpenGVLab/InternVL3_5-8B-HF}"
+INTERNVL_PRETRAINED="${OOS_INTERNVL_PRETRAINED:-$INTERNVL_MODEL_ID}"
+MODEL_ARGS="${OOS_MODEL_ARGS:-pretrained=${INTERNVL_PRETRAINED},do_sample_frames=True,num_frames=150,do_resize_video=False,low_cpu_mem_usage=True,local_files_only=${OOS_LOCAL_FILES_ONLY:-False}}"
+OUTPUT_SUBDIR="${OOS_OUTPUT_SUBDIR:-internvl_hf}"
+export OOS_STAGE_MODEL_REF="${OOS_STAGE_MODEL_REF:-${OOS_INTERNVL_REVISION:-}}"
