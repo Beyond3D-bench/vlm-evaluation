@@ -3,8 +3,15 @@
 <h1>👀 Long Time No See:<br>Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos</h1>
 
 <p>
-Fangzhou Ma<sup>1*</sup> · Ivo Alexander Ban<sup>1*</sup> · Eren Homburg<sup>1*</sup> · Gabriele Goletto<sup>2</sup><br>
-Rémi Pautrat<sup>2</sup> · Mahdi Rad<sup>2</sup> · Chiara Plizzari<sup>3</sup> · Marc Pollefeys<sup>1,2</sup>
+  <a href="#citation"><img src="https://img.shields.io/badge/arXiv-Coming%20Soon-b31b1b?logo=arxiv&logoColor=white" alt="arXiv: coming soon"></a>
+  <a href="https://beyond3d-bench.github.io/website/"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20Website-BEYOND3D-168ac5" alt="BEYOND3D website"></a>
+  <a href="https://huggingface.co/datasets/Ffffangzhu/BEYOND3D"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Benchmark-BEYOND3D-f6b10a" alt="BEYOND3D benchmark on Hugging Face"></a>
+  <a href="https://github.com/Zoulution/oos_vlm_evaluation"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github" alt="Source code"></a>
+</p>
+
+<p>
+Fangzhou Ma<sup>1*</sup> · Ivo Alexander Ban<sup>1*</sup> · <a href="https://erenhomburg.com/">Eren Homburg</a><sup>1*</sup> · <a href="https://gabrielegoletto.github.io/">Gabriele Goletto</a><sup>2</sup><br>
+<a href="https://rpautrat.github.io/">Rémi Pautrat</a><sup>2</sup> · <a href="https://radmahdi.github.io/Home.html">Mahdi Rad</a><sup>2</sup> · <a href="https://chiaraplizz.github.io/">Chiara Plizzari</a><sup>3</sup> · <a href="https://people.inf.ethz.ch/pomarc/">Marc Pollefeys</a><sup>1,2</sup>
 </p>
 
 <p><sup>1</sup> ETH Zurich · <sup>2</sup> Microsoft Spatial AI Lab · <sup>3</sup> Bocconi University<br>
@@ -14,6 +21,19 @@ Rémi Pautrat<sup>2</sup> · Mahdi Rad<sup>2</sup> · Chiara Plizzari<sup>3</sup
 <br>
 
 </div>
+
+## Contents
+
+- [Benchmark](#benchmark)
+- [Results](#results)
+- [Run Your Own Evaluation](#run-your-own-evaluation)
+  - [Installation](#installation)
+  - [Evaluation](#evaluation)
+    - [Slurm](#slurm)
+- [Repository Structure](#repository-structure)
+- [Optional Configuration](#optional-configuration)
+- [Acknowledgements](#acknowledgements)
+- [Citation](#citation)
 
 <a id="benchmark"></a>
 
@@ -47,13 +67,25 @@ where required by their context limits.
 Explore question examples and detailed results on the
 [project website](https://beyond3d-bench.github.io/website/).
 
-<a id="quick-start"></a>
+<a id="run-your-own-evaluation"></a>
+
+## 🏃 Run Your Own Evaluation
+
+<a id="installation"></a>
 
 ## 🛠️ Setup
 
 Requires Linux x86-64, Python 3.10+, and an NVIDIA GPU with a CUDA 12.8-compatible driver.
 The setup script uses `uv`; no Conda or root installation is needed. A C compiler
 (`cc`) and `make` are required to build the bundled FFmpeg libraries.
+
+Run setup on a machine with Internet access. It creates or reuses the selected
+model's locked Python environment, downloads its checkpoint and any required source
+code or auxiliary weights, then downloads the preprocessed BEYOND3D videos and VQA
+files from Hugging Face (currently about 2.6 GB). Finally, it checks the environment
+and video decoder.
+
+### One model
 
 ```bash
 git clone https://github.com/Zoulution/oos_vlm_evaluation.git
@@ -62,21 +94,24 @@ cd oos_vlm_evaluation
 # Choose a directory with enough space for environments, checkpoints, and caches.
 export OOS_STORAGE_ROOT="/absolute/path/to/storage"
 
-# On a connected login/setup node: create the environment, download checkpoints,
-# required model source, and the BEYOND3D dataset (vqa + preprocessed videos), then verify the installation.
+# Create the environment, download checkpoints,
+# required model source, and the BEYOND3D dataset (VQA + preprocessed videos), then verify the installation.
 bash setup.sh --model qwen3_5_9b
 ```
 
-The command creates or reuses a locked environment for the selected model, downloads
-its configured checkpoints and any required upstream source code, then checks the
-installation and video decoding. It also downloads the BEYOND3D dataset snapshot
-(currently about 2.6 GB) into `$HF_HUB_CACHE`, installs FFmpeg, and configures the
-launchers to find it. Run setup on a machine with Internet access; evaluation never
-downloads data.
+Hugging Face downloads are stored in `$OOS_STORAGE_ROOT/hf_cache/hub`. After setup,
+evaluation can run on a compute node without downloading anything.
 
-Approximate checkpoint storage (environments, caches, datasets, and outputs are extra):
+### All supported models
 
-| Preset | Checkpoint | Model files |
+Run `bash setup.sh --all` to prepare every model. VLM-3R setup installs its pinned
+CUDA compiler in user storage; its CUDA extension is built on the first GPU run.
+
+### Storage
+
+Approximate model-download storage for one preset (environment, dataset, and outputs are extra):
+
+| Preset | Downloaded artifacts | Storage |
 | --- | --- | ---: |
 | `qwen3_5_9b` | Qwen3.5-9B | 20 GB |
 | `qwen3_6_27b` | Qwen3.6-27B | 56 GB |
@@ -84,45 +119,39 @@ Approximate checkpoint storage (environments, caches, datasets, and outputs are 
 | `qwen3_vl` | Qwen3-VL-8B-Instruct | 18 GB |
 | `internvl` | InternVL3.5-8B-HF | 18 GB |
 | `sensenova_qwen` | SenseNova-SI-1.3-Qwen3-VL-8B | 18 GB |
-| `cambrian_p` | Cambrian-P-7B and dependencies | 37 GB |
+| `cambrian_p` | Cambrian-P-7B | 16 GB |
 | `spatial_mllm` | Spatial-MLLM-v1.1 | 12 GB |
-| `vlm3r` | VLM-3R and dependencies | 24 GB, including CUT3R |
+| `vlm3r` | VLM-3R-LLaVA-Qwen2-LoRA, LLaVA-NeXT-Video-7B-Qwen2, SigLIP-SO400M-Patch14-384, and CUT3R-512-DPT-4-64 | 24 GB |
 
-At the current revisions, `--all` is expected to use about 279 GB: approximately
-263 GB for unique Hugging Face model files, 3.6 GB for CUT3R and source repositories,
-11.5 GB for the four hard-linked environments and `uv` cache, and 0.4 GB for the CUDA
-toolchain. Reserve around 300 GB; datasets and evaluation outputs require additional
-space. Actual usage can change when a manifest entry tracks an unpinned `main` revision.
+A single-model setup needs the corresponding model download, its environment, and
+the 2.6 GB dataset. `bash setup.sh --all` instead downloads all model checkpoints
+(about 248 GB), required external source code and auxiliary weights (about 4 GB),
+and environments for every preset (about 12 GB). Evaluation outputs require
+additional space.
+
+
+<a id="evaluation"></a>
 
 ## ▶️ Evaluate
+
+To evaluate the baseline dataset with videos and text, run:
 
 ```bash
 # After setup, on a GPU compute node with the shared cache and checkpoints:
 OOS_MODEL=qwen3_5_9b OOS_OFFLINE=1 bash launchers/run_oos_eval.sh
 ```
 
-To use a local or derived dataset instead, set `OOS_DATASET_JSONL`; see the
-[dataset format reference](docs/dataset.md).
 To evaluate the temporal-cues variant shipped with BEYOND3D, set
-`OOS_DATASET_FILE=vqa_temporal_cues.jsonl`.
+`OOS_DATASET_FILE=vqa_temporal_cues.jsonl`. Setup downloads both VQA files and
+their shared videos, so this does not require another download.
+
+`OOS_DATASET_JSONL` is only needed to evaluate a customized local dataset; see the
+[dataset format reference](docs/dataset.md).
 
 Results: `outputs/oos_videoqa/<model>/` in the repository.
 Questions run independently with `prefix` video context.
 
-## 🤖 All models
-
-```bash
-bash setup.sh --all
-```
-
-Presets: `qwen3_5_9b`, `qwen3_6_27b`, `qwen3_6_35b_a3b`, `qwen3_vl`, `internvl`,
-`sensenova_qwen`, `cambrian_p`, `spatial_mllm`, `vlm3r`.
-Use the same preset for setup and `OOS_MODEL`; environments are selected automatically.
-
-VLM-3R setup installs its pinned CUDA compiler in user storage. Its CUDA extension
-is then built automatically on the first GPU run.
-
-## 🖥️ Slurm
+### 🖥️ Slurm
 
 Adjust resources in [the job script](launchers/slurm_oos_eval.sh). After setup:
 
@@ -136,18 +165,37 @@ OOS_OFFLINE=1 bash launchers/submit_oos_smoke_tests.sh --all --limit 2
 
 Logs: `logs/oos_videoqa_<job-id>.{out,err}`. Omit `OOS_LIMIT` for a full single-model run.
 
-## ⚙️ Configuration
+<a id="repository-structure"></a>
 
-Copy [.env.example](.env.example) to `.env`. Most users only need to set:
+## 🗂️ Repository structure
 
-```bash
-OOS_STORAGE_ROOT="/absolute/path/to/storage"
-OOS_DATASET_JSONL="/absolute/path/to/questions.jsonl"
-```
+| Path | Purpose |
+| --- | --- |
+| [launchers/](launchers/) | Commands for local and Slurm evaluation; [model presets](launchers/models/) define how each model is launched. |
+| [models/manifest.yaml](models/manifest.yaml) | Pinned model checkpoints and external source revisions used by setup. |
+| [lmms_eval/](lmms_eval/) | The evaluation framework, including the BEYOND3D task and model adapters. |
+| [tools/](tools/) | Setup, download, dataset-resolution, and verification utilities. |
+| [environments/](environments/) | Locked Python dependency specifications for the supported model environments. |
+| [docs/](docs/) | Dataset format and other reference documentation. |
 
-Other paths are derived automatically. Shared defaults live in
-[launchers/oos_env.sh](launchers/oos_env.sh), while each file under
-[launchers/models/](launchers/models/) defines how that model is launched.
+<a id="optional-configuration"></a>
+
+## ⚙️ Optional configuration
+
+The setup and evaluation commands above work without configuration. Optionally add
+variables to `.env` to avoid repeating `export` commands; see
+[.env.example](.env.example) for an example. Both `setup.sh` and the evaluation
+launchers load this file automatically.
+
+- Set `OOS_STORAGE_ROOT` to choose where setup stores environments, model files,
+  and downloaded benchmark data; evaluation uses the same location.
+- Set `OOS_DATASET_JSONL` only to evaluate a customized local dataset instead of
+  the BEYOND3D data downloaded during setup.
+
+Other model-specific launch settings are documented in
+[launchers/models/](launchers/models/).
+
+<a id="citation"></a>
 
 ## 📖 Citation
 
@@ -164,11 +212,17 @@ If you use this code or benchmark, please cite **Long Time No See**:
 
 Machine-readable metadata is available in [CITATION.cff](CITATION.cff).
 
+<a id="acknowledgements"></a>
+
 ## 🙏 Acknowledgements
 
-BEYOND3D builds on the videos, object annotations, and scene reconstructions of
-[HD-EPIC](https://hd-epic.github.io/site/).
-Our evaluation code builds on [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval). See [LICENSE](LICENSE) and [CITATION.cff](CITATION.cff).
+We are grateful to the [HD-EPIC](https://hd-epic.github.io/site/) team for their
+rich collection of videos, annotations, and digital twins. BEYOND3D is built on
+these remarkable assets.
+
+We also thank the [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) team
+for the evaluation framework that this repository extends. See [LICENSE](LICENSE)
+and [CITATION.cff](CITATION.cff) for attribution and licensing details.
 
 ## 📄 License
 

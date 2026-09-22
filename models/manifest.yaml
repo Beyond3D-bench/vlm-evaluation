@@ -63,11 +63,6 @@ huggingface_models:
     artifacts:
       - repo_id: nyu-visionx/Cambrian-P-7B
         revision: d219bdf9c83ec63424f51f4b26be424c94211b3b
-      # Required by the unmodified upstream Cambrian-P loader.
-      - repo_id: lmms-lab/llava-onevision-qwen2-7b-ov
-        revision: null
-      - repo_id: google/siglip-so400m-patch14-384
-        revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
   spatial_mllm:
     artifacts:
       - repo_id: Diankun/Spatial-MLLM-v1.1-Instruct-820K
