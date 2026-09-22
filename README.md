@@ -199,7 +199,7 @@ Other model-specific launch settings are documented in
 
 ## 📖 Citation
 
-If you use this code or benchmark, please cite **Long Time No See**:
+If you use this code or benchmark, please cite:
 
 ```bibtex
 @misc{ma2026longtime,
