@@ -10,7 +10,7 @@
 </p>
 
 <p>
-Fangzhou Ma<sup>1*</sup> · Ivo Alexander Ban<sup>1*</sup> · <a href="https://erenhomburg.com/">Eren Homburg</a><sup>1*</sup> · <a href="https://gabrielegoletto.github.io/">Gabriele Goletto</a><sup>2</sup><br>
+Fangzhou Ma<sup>1*</sup> · <a href="https://ivo-ab.github.io/">Ivo Alexander Ban</a><sup>1*</sup> · <a href="https://erenhomburg.com/">Eren Homburg</a><sup>1*</sup> · <a href="https://gabrielegoletto.github.io/">Gabriele Goletto</a><sup>2</sup><br>
 <a href="https://rpautrat.github.io/">Rémi Pautrat</a><sup>2</sup> · <a href="https://radmahdi.github.io/Home.html">Mahdi Rad</a><sup>2</sup> · <a href="https://chiaraplizz.github.io/">Chiara Plizzari</a><sup>3</sup> · <a href="https://people.inf.ethz.ch/pomarc/">Marc Pollefeys</a><sup>1,2</sup>
 </p>
 
@@ -205,7 +205,7 @@ Other model-specific launch settings are documented in
 If you use this code or benchmark, please cite:
 
 ```bibtex
-@misc{ma2026longtime,
+@misc{ma2026beyond3d,
   title  = {Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos},
   author = {Ma, Fangzhou and Ban, Ivo Alexander and Homburg, Eren and Goletto, Gabriele and Pautrat, R\'emi and Rad, Mahdi and Plizzari, Chiara and Pollefeys, Marc},
   year   = {2026},
