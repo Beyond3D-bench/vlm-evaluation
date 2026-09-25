@@ -6,7 +6,6 @@
   <a href="#citation"><img src="https://img.shields.io/badge/arXiv-Coming%20Soon-b31b1b?logo=arxiv&logoColor=white" alt="arXiv: coming soon"></a>
   <a href="https://beyond3d-bench.github.io/website/"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20Website-BEYOND3D-168ac5" alt="BEYOND3D website"></a>
   <a href="https://huggingface.co/datasets/Ffffangzhu/BEYOND3D"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Benchmark-BEYOND3D-f6b10a" alt="BEYOND3D benchmark on Hugging Face"></a>
-  <a href="https://github.com/Zoulution/oos_vlm_evaluation"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github" alt="Source code"></a>
 </p>
 
 <p>
@@ -226,6 +225,8 @@ these remarkable assets.
 We also thank the [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) team
 for the evaluation framework that this repository extends. See [LICENSE](LICENSE)
 and [CITATION.cff](CITATION.cff) for attribution and licensing details.
+
+We thank Xiaoxuan Cheng (ETH Zürich) for assistance with executing experiments on the cluster.
 
 ## 📄 License
 
