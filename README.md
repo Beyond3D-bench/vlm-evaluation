@@ -50,8 +50,7 @@ plus **1,000 visible controls** for the visibility question. Geometry-aware visi
 tracks and manual inspection establish that the out-of-sight targets are no longer
 observable at query time.
 
-This repository contains the evaluation code. The code used to construct
-BEYOND3D is available in the [benchmark-construction repository](https://github.com/Beyond3D-bench/benchmark-construction).
+This repository contains the evaluation code. 
 
 <a id="results"></a>
 
@@ -81,52 +80,119 @@ Requires Linux x86-64, Python 3.10+, and an NVIDIA GPU with a CUDA 12.8-compatib
 The setup script uses `uv`; no Conda or root installation is needed. A C compiler
 (`cc`) and `make` are required to build the bundled FFmpeg libraries.
 
-Run setup on a machine with Internet access. It creates or reuses the selected
-model's locked Python environment, downloads its checkpoint and any required source
-code or auxiliary weights, then downloads the preprocessed BEYOND3D videos and VQA
-files from Hugging Face (currently about 2.6 GB). Finally, it checks the environment
-and video decoder.
+Run setup on a machine with Internet access. It prepares the selected model,
+fetches the benchmark annotations from Hugging Face, and downloads and preprocesses
+the evaluation videos. Prepare the intermediate data as shown below before the first run.
 
-### One model
+### Prepare videos
 
+You will need approximately **120 GiB of free disk space** for dataset preparation. The original HD-EPIC videos require about **115 GiB**, and the extracted intermediate data about **2.2 GiB**.
+
+Choose a storage directory. The same location will later be used for model checkpoints, environments, and caches:
+
+```bash
+export OOS_STORAGE_ROOT="/absolute/path/to/storage"
+```
+
+Download the [HD-EPIC intermediate data](https://uob-my.sharepoint.com/:f:/g/personal/jc17360_bristol_ac_uk/IgCCGb5qDbiOR7cmj1R9OyUWAXQFYL7FP_d0eMzB4ENPVQk?e=8SoGEy). If the link requires sign-in, see the [official HD-EPIC annotations README](https://github.com/hd-epic/hd-epic-annotations/blob/main/README.md).
+
+Extract the participant ZIP files to:
+
+```text id="fxabiv"
+$OOS_STORAGE_ROOT/data/HD-EPIC/Intermediate_data/
+```
+
+Expected layout:
+
+```text id="var7ub"
+$OOS_STORAGE_ROOT/data/HD-EPIC/Intermediate_data/
+├── P01/
+│   └── P01-<YYYYMMDD>-<HHMMSS>/
+│       └── device_calibration.json
+├── P02/
+│   └── P02-<YYYYMMDD>-<HHMMSS>/
+│       └── device_calibration.json
+└── ...
+```
+
+Each participant folder (`P01`–`P09`) should contain one folder per video, with its corresponding `device_calibration.json`.
+
+Then run:
+
+```bash
+bash setup.sh --data-only
+```
+
+This downloads `vqa_baseline.jsonl` and `vqa_temporal_cues.jsonl` from Hugging Face into:
+
+```text
+$OOS_STORAGE_ROOT/data/BEYOND3D/
+```
+
+It also downloads the required HD-EPIC videos and preprocesses them for evaluation by resizing them to **448×448 at 1 FPS**, adding timestamps to each frame, and masking the black regions outside the Aria glasses' circular fisheye field of view.
+
+By default, setup uses **8 parallel workers each for downloading and preprocessing**. To change the parallelism:
+
+```bash
+OOS_VIDEO_DOWNLOAD_WORKERS=4 OOS_VIDEO_PREP_WORKERS=16 \
+bash setup.sh --data-only
+```
+
+After setup, the original HD-EPIC videos are stored under:
+
+```text
+$OOS_STORAGE_ROOT/data/HD-EPIC/Videos/Pxx/<video_id>.mp4
+```
+
+and the processed BEYOND3D videos under:
+
+```text
+$OOS_STORAGE_ROOT/data/BEYOND3D/videos/<video_id>.mp4
+```
+
+### Prepare one model
+To set up a single model:
 ```bash
 git clone https://github.com/Beyond3D-bench/vlm-evaluation.git
 cd vlm-evaluation
 
-# Choose a directory with enough space for environments, checkpoints, and caches.
 export OOS_STORAGE_ROOT="/absolute/path/to/storage"
 
-# Create the environment, download checkpoints,
-# required model source, and the BEYOND3D dataset (VQA + preprocessed videos), then verify the installation.
-bash setup.sh --model qwen3_5_9b
+bash setup.sh --model qwen3_5_9b --skip-data
 ```
 
-Hugging Face downloads are stored in `$OOS_STORAGE_ROOT/hf_cache/hub`. After setup,
-evaluation can run on a compute node without downloading anything.
+The setup script creates the model environment, downloads the required checkpoint and dependencies, and verifies the installation.
 
-### All supported models
+Model downloads are stored in `$OOS_STORAGE_ROOT/hf_cache/hub`. Since benchmark
+data was prepared above, `--skip-data` skips data preparation. After setup completes, evaluation can
+run offline.
 
-Run `bash setup.sh --all` to prepare every model. VLM-3R setup installs its pinned
+### Prepare all models
+
+After preparing the data above, run `bash setup.sh --all --skip-data` to prepare every model. VLM-3R setup installs its pinned
 CUDA compiler in user storage; its CUDA extension is built on the first GPU run.
 
 ### Storage
 
 Approximate model-download storage for one preset (environment, dataset, and outputs are extra):
 
-| Preset | Downloaded artifacts | Storage |
-| --- | --- | ---: |
-| `qwen3_5_9b` | Qwen3.5-9B | 20 GB |
-| `qwen3_6_27b` | Qwen3.6-27B | 56 GB |
-| `qwen3_6_35b_a3b` | Qwen3.6-35B-A3B | 72 GB |
-| `qwen3_vl` | Qwen3-VL-8B-Instruct | 18 GB |
-| `internvl` | InternVL3.5-8B-HF | 18 GB |
-| `sensenova_qwen` | SenseNova-SI-1.3-Qwen3-VL-8B | 18 GB |
-| `cambrian_p` | Cambrian-P-7B | 16 GB |
-| `spatial_mllm` | Spatial-MLLM-v1.1 | 12 GB |
-| `vlm3r` | VLM-3R-LLaVA-Qwen2-LoRA, LLaVA-NeXT-Video-7B-Qwen2, SigLIP-SO400M-Patch14-384, and CUT3R-512-DPT-4-64 | 24 GB |
+| Preset | Downloaded artifacts | Storage | Source |
+| --- | --- | ---: | --- |
+| `qwen3_5_9b` | Qwen3.5-9B | 20 GB | [Checkpoint](https://huggingface.co/Qwen/Qwen3.5-9B) |
+| `qwen3_6_27b` | Qwen3.6-27B | 56 GB | [Checkpoint](https://huggingface.co/Qwen/Qwen3.6-27B) |
+| `qwen3_6_35b_a3b` | Qwen3.6-35B-A3B | 72 GB | [Checkpoint](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) |
+| `qwen3_vl` | Qwen3-VL-8B-Instruct | 18 GB | [Checkpoint](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) |
+| `internvl` | InternVL3.5-8B-HF | 18 GB | [Checkpoint](https://huggingface.co/OpenGVLab/InternVL3_5-8B-HF) |
+| `sensenova_qwen` | SenseNova-SI-1.3-Qwen3-VL-8B | 18 GB | [Checkpoint](https://huggingface.co/sensenova/SenseNova-SI-1.3-Qwen3-VL-8B) |
+| `cambrian_p` | Cambrian-P-7B | 16 GB | [Checkpoint](https://huggingface.co/nyu-visionx/Cambrian-P-7B) · [Code](https://github.com/cambrian-mllm/cambrian-p) |
+| `spatial_mllm` | Spatial-MLLM-v1.1 | 12 GB | [Checkpoint](https://huggingface.co/Diankun/Spatial-MLLM-v1.1-Instruct-820K) · [Code](https://github.com/THU-SI/Spatial-MLLM) |
+| `vlm3r` | VLM-3R-LLaVA-Qwen2-LoRA, LLaVA-NeXT-Video-7B-Qwen2, SigLIP-SO400M-Patch14-384, and CUT3R-512-DPT-4-64 | 24 GB | [Checkpoint](https://huggingface.co/Journey9ni/vlm-3r-llava-qwen2-lora) · [Code](https://github.com/VITA-Group/VLM-3R) |
+
+Setup also clones the linked code repositories for Cambrian-P, Spatial-MLLM,
+and VLM-3R at the revisions pinned in [models/manifest.yaml](models/manifest.yaml).
 
 A single-model setup needs the corresponding model download, its environment, and
-the 2.6 GB dataset. `bash setup.sh --all` instead downloads all model checkpoints
+the annotations, original HD-EPIC videos, and processed videos. `bash setup.sh --all` instead downloads all model checkpoints
 (about 248 GB), required external source code and auxiliary weights (about 4 GB),
 and environments for every preset (about 12 GB). Evaluation outputs require
 additional space.
@@ -144,8 +210,8 @@ OOS_MODEL=qwen3_5_9b OOS_OFFLINE=1 bash launchers/run_oos_eval.sh
 ```
 
 To evaluate the temporal-cues variant shipped with BEYOND3D, set
-`OOS_DATASET_FILE=vqa_temporal_cues.jsonl`. Setup downloads both VQA files and
-their shared videos, so this does not require another download.
+`OOS_DATASET_FILE=vqa_temporal_cues.jsonl`. Setup prepares both variants and their
+shared videos.
 
 `OOS_DATASET_JSONL` is only needed to evaluate a customized local dataset; see the
 [dataset format reference](docs/dataset.md).
@@ -184,18 +250,24 @@ Logs: `logs/oos_videoqa_<job-id>.{out,err}`. Omit `OOS_LIMIT` for a full single-
 
 ## ⚙️ Optional configuration
 
-The setup and evaluation commands above work without configuration. Optionally add
-variables to `.env` to avoid repeating `export` commands; see
-[.env.example](.env.example) for an example. Both `setup.sh` and the evaluation
-launchers load this file automatically.
+Optionally save settings in `.env` to avoid repeating shell exports; see
+[.env.example](.env.example). Both `setup.sh` and the evaluation launchers load
+this file automatically.
 
-- Set `OOS_STORAGE_ROOT` to choose where setup stores environments, model files,
-  and downloaded benchmark data; evaluation uses the same location.
-- Set `OOS_DATASET_JSONL` only to evaluate a customized local dataset instead of
-  the BEYOND3D data downloaded during setup.
+- `OOS_STORAGE_ROOT` sets the storage location for environments, model files,
+  caches, and benchmark data. Setup and evaluation use the same location.
+- `OOS_VIDEO_PREP_WORKERS` sets the number of video preprocessing workers
+  (default: `8`).
+- `OOS_VIDEO_DOWNLOAD_WORKERS` sets the number of video download workers
+  (default: `8`).
+
+To evaluate a customized local dataset, set `OOS_DATASET_JSONL`; see the
+[dataset format reference](docs/dataset.md). Standard BEYOND3D evaluation uses
+the data downloaded during setup automatically.
 
 Other model-specific launch settings are documented in
 [launchers/models/](launchers/models/).
+
 
 <a id="citation"></a>
 

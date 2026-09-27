@@ -1,14 +1,29 @@
 import copy
-import json
-from pathlib import Path
 
 from tools.validate_dataset import validate_record
 
-EXAMPLE = Path(__file__).resolve().parents[2] / 'examples/prepared_dataset.jsonl'
-
 
 def record():
-    return json.loads(EXAMPLE.read_text())
+    return {
+        "doc_id": "synthetic_001",
+        "trajectory_id": "synthetic_001",
+        "video_id": "synthetic_video",
+        "mode": "multi_turn",
+        "video_path": "/path/to/synthetic_video.mp4",
+        "query_time_sec": 5.0,
+        "object_a_name": "cup",
+        "steps": [
+            {
+                "step": "1",
+                "step_question_class": "oos_step1_visibility",
+                "question": "Is the cup visible at the query time?",
+                "choices": ["No", "Yes"],
+                "correct_idx": 1,
+                "target_text": "Yes",
+                "skipped": False,
+            }
+        ],
+    }
 
 
 def test_synthetic_record_structure():

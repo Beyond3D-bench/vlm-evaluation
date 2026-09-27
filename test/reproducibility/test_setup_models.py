@@ -29,7 +29,7 @@ def test_setup_dry_run_does_not_create_storage(tmp_path):
     assert not storage.exists()
     assert output.count('--profile base') == 1
     assert '--model vlm3r' in output
-    assert 'resolve_oos_dataset.py' in output
+    assert 'setup_dataset.py' in output
     assert 'prepare_cut3r.py' in output
 
 
@@ -128,3 +128,44 @@ def test_build_rejects_wrong_cuda_version(tmp_path, monkeypatch):
     monkeypatch.setattr(build.subprocess, 'check_output', lambda *a, **kw: 'release 12.4, V12.4.0')
     with pytest.raises(RuntimeError, match='CUDA 12.8 is required'):
         build.main()
+
+
+def test_data_only_dry_run_does_not_prepare_models(tmp_path):
+    storage = tmp_path / 'storage'
+    env = dict(os.environ, OOS_STORAGE_ROOT=str(storage), OOS_VENV_ROOT=str(storage / 'venvs'))
+    output = subprocess.check_output(
+        [sys.executable, str(ROOT / 'tools/setup_models.py'), '--data-only', '--dry-run',
+         '--intermediate-root', '/camera-data'], env=env, text=True)
+    assert 'video-preparation.txt' in output
+    assert 'setup_dataset.py --intermediate-root /camera-data' in output
+    assert 'create_environment.py' not in output
+    assert 'download_hf_models.py' not in output
+    assert not storage.exists()
+
+
+def test_skip_data_dry_run_prepares_only_models(tmp_path):
+    env = dict(os.environ, OOS_STORAGE_ROOT=str(tmp_path), OOS_VENV_ROOT=str(tmp_path / 'venvs'))
+    output = subprocess.check_output(
+        [sys.executable, str(ROOT / 'tools/setup_models.py'), '--model', 'qwen3_5_9b',
+         '--skip-data', '--dry-run'], env=env, text=True)
+    assert 'setup_dataset.py' not in output
+    assert 'video-preparation.txt' not in output
+    assert 'download_hf_models.py' in output
+
+
+def test_setup_uv_commands_disable_parent_configuration(tmp_path):
+    env = dict(os.environ, OOS_STORAGE_ROOT=str(tmp_path), OOS_VENV_ROOT=str(tmp_path / 'venvs'))
+    output = subprocess.check_output(
+        [sys.executable, str(ROOT / 'tools/setup_models.py'), '--data-only', '--dry-run'],
+        env=env, text=True)
+    assert '--no-config venv' in output
+    assert '--no-config pip install' in output
+
+
+def test_model_environment_uv_commands_disable_parent_configuration(tmp_path):
+    env = dict(os.environ, OOS_STORAGE_ROOT=str(tmp_path), OOS_UV='/test/uv')
+    output = subprocess.check_output(
+        [sys.executable, str(ROOT / 'tools/create_environment.py'), '--profile', 'base',
+         '--venv-root', str(tmp_path / 'venvs'), '--dry-run'], env=env, text=True)
+    assert '/test/uv --no-config venv' in output
+    assert '/test/uv --no-config pip sync' in output

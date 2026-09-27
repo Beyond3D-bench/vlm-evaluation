@@ -57,10 +57,10 @@ def main() -> int:
                 shutil.rmtree(target)
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
-            run([uv, "venv", "--python", python, str(target)], dry_run=args.dry_run)
+            run([uv, "--no-config", "venv", "--python", python, str(target)], dry_run=args.dry_run)
         interpreter = target / "bin" / "python"
         run(
-            [uv, "pip", "sync", str(profile.lock), "--python", str(interpreter), "--torch-backend", "cu128"],
+            [uv, "--no-config", "pip", "sync", str(profile.lock), "--python", str(interpreter), "--torch-backend", "cu128"],
             dry_run=args.dry_run,
         )
         if name == "base":

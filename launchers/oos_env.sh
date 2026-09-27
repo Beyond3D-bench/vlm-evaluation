@@ -48,6 +48,9 @@ export OOS_STORAGE_ROOT="${OOS_STORAGE_ROOT:-$HOME/scratch}"
 export OOS_CHECKPOINT_DIR="${OOS_CHECKPOINT_DIR:-$OOS_STORAGE_ROOT/checkpoints}"
 export OOS_VENV_ROOT="${OOS_VENV_ROOT:-$OOS_STORAGE_ROOT/venvs}"
 export OOS_DATA_ROOT="${OOS_DATA_ROOT:-$OOS_STORAGE_ROOT/data}"
+export OOS_INTERMEDIATE_ROOT="${OOS_INTERMEDIATE_ROOT:-$OOS_DATA_ROOT/HD-EPIC/Intermediate_data}"
+export OOS_VIDEO_PREP_WORKERS="${OOS_VIDEO_PREP_WORKERS:-4}"
+export OOS_VIDEO_DOWNLOAD_WORKERS="${OOS_VIDEO_DOWNLOAD_WORKERS:-8}"
 export OOS_MODEL_SOURCE_DIR="${OOS_MODEL_SOURCE_DIR:-$OOS_STORAGE_ROOT}"
 export VLM3R_CUDA_HOME="${VLM3R_CUDA_HOME:-$OOS_STORAGE_ROOT/toolchains/cuda-12.8}"
 
@@ -124,7 +127,8 @@ fi
 # takes precedence; otherwise the launcher resolves this Hugging Face dataset.
 export OOS_DATASET_JSONL="${OOS_DATASET_JSONL:-}"
 export OOS_DATASET_REPO="${OOS_DATASET_REPO:-Ffffangzhu/BEYOND3D}"
-export OOS_DATASET_REVISION="${OOS_DATASET_REVISION:-}"
+export OOS_DATASET_DIR="${OOS_DATASET_DIR:-$OOS_DATA_ROOT/BEYOND3D}"
+export OOS_VIDEO_BASE_DIR="${OOS_VIDEO_BASE_DIR:-$OOS_DATA_ROOT/BEYOND3D/videos}"
 export OOS_DATASET_FILE="${OOS_DATASET_FILE:-vqa_baseline.jsonl}"
 export OOS_DEBUG_STEP="${OOS_DEBUG_STEP:-}"
 # Compatibility with existing .env files: only independent questions are supported.

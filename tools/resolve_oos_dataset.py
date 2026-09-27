@@ -20,39 +20,46 @@ def resolve_dataset(
     offline: bool,
     jsonl_name: str = DEFAULT_JSONL,
     downloader=None,
+    video_base_dir: str | None = None,
+    annotations_only: bool = False,
+    local_dir: str | None = None,
 ) -> tuple[Path, Path]:
     """Download or find a dataset snapshot and return its JSONL and video paths."""
-    if downloader is None:
-        from huggingface_hub import snapshot_download
-
-        downloader = snapshot_download
-
-    snapshot = Path(
-        downloader(
+    if offline and local_dir:
+        snapshot = Path(local_dir)
+    else:
+        if downloader is None:
+            from huggingface_hub import snapshot_download
+            downloader = snapshot_download
+        snapshot = Path(downloader(
             repo_id=repository,
             repo_type="dataset",
-            revision=revision,
+            revision=revision or "main",
             cache_dir=cache_dir,
             local_files_only=offline,
-        )
-    )
+            **({"local_dir": local_dir} if local_dir else {}),
+            **({"ignore_patterns": ["videos/*"]} if annotations_only or video_base_dir else {}),
+        ))
     jsonl = snapshot / jsonl_name
-    videos = snapshot / "videos"
+    videos = Path(video_base_dir) if video_base_dir else snapshot / "videos"
     if not jsonl.is_file():
         raise FileNotFoundError(f"Dataset snapshot is missing {jsonl_name}: {snapshot}")
-    if not videos.is_dir():
-        raise FileNotFoundError(f"Dataset snapshot is missing videos/: {snapshot}")
+    if not annotations_only and not videos.is_dir():
+        raise FileNotFoundError(f"Missing prepared videos: {videos}. See the Prepare videos section in README.md and set OOS_VIDEO_BASE_DIR.")
     return jsonl, videos
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=os.getenv("OOS_DATASET_REPO", DEFAULT_REPOSITORY))
-    parser.add_argument("--revision", default=os.getenv("OOS_DATASET_REVISION"))
+    parser.add_argument("--revision", default="main")
+    parser.add_argument("--local-dir", default=os.getenv("OOS_DATASET_DIR"))
     parser.add_argument("--cache-dir", default=os.getenv("HF_HUB_CACHE"))
     parser.add_argument("--file", default=os.getenv("OOS_DATASET_FILE", DEFAULT_JSONL),
                         help="JSONL filename in the dataset snapshot.")
     parser.add_argument("--offline", action="store_true", default=os.getenv("OOS_OFFLINE", "0") == "1")
+    parser.add_argument("--annotations-only", action="store_true", help="Download annotations and reference assets without videos.")
+    parser.add_argument("--video-base-dir", default=os.getenv("OOS_VIDEO_BASE_DIR"))
     parser.add_argument("--shell", action="store_true", help="Print shell exports for the launcher.")
     args = parser.parse_args()
     if Path(args.file).name != args.file:
@@ -65,6 +72,9 @@ def main() -> int:
             cache_dir=args.cache_dir,
             offline=args.offline,
             jsonl_name=args.file,
+            video_base_dir=args.video_base_dir,
+            annotations_only=args.annotations_only,
+            local_dir=args.local_dir,
         )
     except Exception as exc:
         parser.exit(
