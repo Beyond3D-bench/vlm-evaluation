@@ -13,7 +13,7 @@ Fangzhou Ma<sup>1*</sup> · <a href="https://ivo-ab.github.io/">Ivo Alexander Ba
 <a href="https://rpautrat.github.io/">Rémi Pautrat</a><sup>2</sup> · <a href="https://radmahdi.github.io/Home.html">Mahdi Rad</a><sup>2</sup> · <a href="https://chiaraplizz.github.io/">Chiara Plizzari</a><sup>3</sup> · <a href="https://people.inf.ethz.ch/pomarc/">Marc Pollefeys</a><sup>1,2</sup>
 </p>
 
-<p><sup>1</sup> ETH Zurich · <sup>2</sup> Microsoft Spatial AI Lab · <sup>3</sup> Bocconi University<br>
+<p><sup>1</sup> ETH Zürich · <sup>2</sup> Microsoft Spatial AI Lab · <sup>3</sup> Bocconi University<br>
 <sup>*</sup> Equal contribution.</p>
 
 <img src="docs/assets/teaser_video.gif" width="480" alt="An object being moved through a kitchen and leaving the camera view.">
@@ -26,7 +26,7 @@ Fangzhou Ma<sup>1*</sup> · <a href="https://ivo-ab.github.io/">Ivo Alexander Ba
 - [Benchmark](#benchmark)
 - [Results](#results)
 - [Run Your Own Evaluation](#run-your-own-evaluation)
-  - [Installation](#installation)
+  - [Setup](#setup)
   - [Evaluation](#evaluation)
     - [Slurm](#slurm)
 - [Repository Structure](#repository-structure)
@@ -50,8 +50,6 @@ plus **1,000 visible controls** for the visibility question. Geometry-aware visi
 tracks and manual inspection establish that the out-of-sight targets are no longer
 observable at query time.
 
-This repository contains the evaluation code. 
-
 <a id="results"></a>
 
 ## 📊 Results at a glance
@@ -72,7 +70,7 @@ Explore question examples and detailed results on the
 
 ## 🏃 Run Your Own Evaluation
 
-<a id="installation"></a>
+<a id="setup"></a>
 
 ## 🛠️ Setup
 
@@ -82,7 +80,7 @@ The setup script uses `uv`; no Conda or root installation is needed. A C compile
 
 Run setup on a machine with Internet access. It prepares the selected model,
 fetches the benchmark annotations from Hugging Face, and downloads and preprocesses
-the evaluation videos. Prepare the intermediate data as shown below before the first run.
+the evaluation videos. Prepare the required HD-EPIC intermediate data as described below before the first evaluation run.
 
 ### Prepare videos
 
@@ -131,7 +129,7 @@ $OOS_STORAGE_ROOT/data/BEYOND3D/
 
 It also downloads the required HD-EPIC videos and preprocesses them for evaluation by resizing them to **448×448 at 1 FPS**, adding timestamps to each frame, and masking the black regions outside the Aria glasses' circular fisheye field of view.
 
-By default, setup uses **8 parallel workers each for downloading and preprocessing**. To change the parallelism:
+By default, setup uses **8 parallel workers for downloading and 8 for preprocessing**. To change the parallelism:
 
 ```bash
 OOS_VIDEO_DOWNLOAD_WORKERS=4 OOS_VIDEO_PREP_WORKERS=16 \
@@ -163,8 +161,7 @@ bash setup.sh --model qwen3_5_9b --skip-data
 
 The setup script creates the model environment, downloads the required checkpoint and dependencies, and verifies the installation.
 
-Model downloads are stored in `$OOS_STORAGE_ROOT/hf_cache/hub`. Since benchmark
-data was prepared above, `--skip-data` skips data preparation. After setup completes, evaluation can
+Model downloads are stored in `$OOS_STORAGE_ROOT/hf_cache/hub`. Since the benchmark data was prepared above, `--skip-data` skips data preparation. After setup completes, evaluation can
 run offline.
 
 ### Prepare all models
@@ -217,8 +214,9 @@ shared videos.
 [dataset format reference](docs/dataset.md).
 
 Results: `outputs/oos_videoqa/<model>/` in the repository.
-Questions run independently with `prefix` video context.
+Questions are evaluated independently using the corresponding video prefix as context.
 
+<a id="slurm"></a>
 ### 🖥️ Slurm
 
 Adjust resources in [the job script](launchers/slurm_oos_eval.sh). After setup:
@@ -262,12 +260,25 @@ this file automatically.
   (default: `8`).
 
 To evaluate a customized local dataset, set `OOS_DATASET_JSONL`; see the
-[dataset format reference](docs/dataset.md). Standard BEYOND3D evaluation uses
-the data downloaded during setup automatically.
+[dataset format reference](docs/dataset.md). Standard BEYOND3D evaluation automatically uses the data downloaded during setup.
 
 Other model-specific launch settings are documented in
 [launchers/models/](launchers/models/).
 
+
+<a id="acknowledgements"></a>
+
+## 🙏 Acknowledgements
+
+We are grateful to the [HD-EPIC](https://hd-epic.github.io/site/) team for their
+rich collection of videos, annotations, and digital twins. BEYOND3D is built on
+these remarkable assets.
+
+We also thank the [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) team
+for the evaluation framework that this repository extends. See [LICENSE](LICENSE)
+and [CITATION.cff](CITATION.cff) for attribution and licensing details.
+
+We thank Xiaoxuan Cheng (ETH Zürich) for assistance with executing experiments on the cluster.
 
 <a id="citation"></a>
 
@@ -285,20 +296,6 @@ If you use this code or benchmark, please cite:
 ```
 
 Machine-readable metadata is available in [CITATION.cff](CITATION.cff).
-
-<a id="acknowledgements"></a>
-
-## 🙏 Acknowledgements
-
-We are grateful to the [HD-EPIC](https://hd-epic.github.io/site/) team for their
-rich collection of videos, annotations, and digital twins. BEYOND3D is built on
-these remarkable assets.
-
-We also thank the [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) team
-for the evaluation framework that this repository extends. See [LICENSE](LICENSE)
-and [CITATION.cff](CITATION.cff) for attribution and licensing details.
-
-We thank Xiaoxuan Cheng (ETH Zürich) for assistance with executing experiments on the cluster.
 
 ## 📄 License
 
