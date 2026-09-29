@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "Please cite the Long Time No See paper in preferred-citation when using this code or benchmark. The upstream lmms-eval framework is credited in references."
+message: "If you find our paper, code, or benchmark dataset useful for your research, please cite our work. The upstream lmms-eval framework is credited in references."
 title: "Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos — Evaluation Code"
 type: software
 authors:
@@ -19,12 +19,17 @@ authors:
     given-names: "Chiara"
   - family-names: "Pollefeys"
     given-names: "Marc"
-url: "https://github.com/Zoulution/oos_vlm_evaluation"
-repository-code: "https://github.com/Zoulution/oos_vlm_evaluation"
+url: "https://github.com/Beyond3D-bench/vlm-evaluation"
+repository-code: "https://github.com/Beyond3D-bench/vlm-evaluation"
 preferred-citation:
   type: article
   title: "Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos"
   year: 2026
+  url: "https://arxiv.org/abs/2609.34630"
+  identifiers:
+    - type: other
+      value: "arXiv:2609.34630"
+      description: "arXiv preprint"
   authors:
     - family-names: "Ma"
       given-names: "Fangzhou"

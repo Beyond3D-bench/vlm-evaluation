@@ -31,8 +31,10 @@ Fangzhou Ma<sup>1*</sup> · <a href="https://ivo-ab.github.io/">Ivo Alexander Ba
     - [Slurm](#slurm)
 - [Repository Structure](#repository-structure)
 - [Optional Configuration](#optional-configuration)
+  - [Custom datasets](#custom-datasets)
 - [Acknowledgements](#acknowledgements)
 - [Citation](#citation)
+- [License](#license)
 
 <a id="benchmark"></a>
 
@@ -82,6 +84,13 @@ Run setup on a machine with Internet access. It prepares the selected model,
 fetches the benchmark annotations from Hugging Face, and downloads and preprocesses
 the evaluation videos. Prepare the required HD-EPIC intermediate data as described below before the first evaluation run.
 
+Clone the repository before running the setup commands:
+
+```bash
+git clone https://github.com/Beyond3D-bench/vlm-evaluation.git
+cd vlm-evaluation
+```
+
 ### Prepare videos
 
 You will need approximately **120 GiB of free disk space** for dataset preparation. The original HD-EPIC videos require about **115 GiB**, and the extracted intermediate data about **2.2 GiB**.
@@ -96,13 +105,13 @@ Download the [HD-EPIC intermediate data](https://uob-my.sharepoint.com/:f:/g/per
 
 Extract the participant ZIP files to:
 
-```text id="fxabiv"
+```text
 $OOS_STORAGE_ROOT/data/HD-EPIC/Intermediate_data/
 ```
 
 Expected layout:
 
-```text id="var7ub"
+```text
 $OOS_STORAGE_ROOT/data/HD-EPIC/Intermediate_data/
 ├── P01/
 │   └── P01-<YYYYMMDD>-<HHMMSS>/
@@ -129,7 +138,7 @@ $OOS_STORAGE_ROOT/data/BEYOND3D/
 
 It also downloads the required HD-EPIC videos and preprocesses them for evaluation by resizing them to **448×448 at 1 FPS**, adding timestamps to each frame, and masking the black regions outside the Aria glasses' circular fisheye field of view.
 
-By default, setup uses **8 parallel workers for downloading and 8 for preprocessing**. To change the parallelism:
+By default, setup uses **8 parallel workers for downloading and 4 for preprocessing**. To change the parallelism:
 
 ```bash
 OOS_VIDEO_DOWNLOAD_WORKERS=4 OOS_VIDEO_PREP_WORKERS=16 \
@@ -149,13 +158,10 @@ $OOS_STORAGE_ROOT/data/BEYOND3D/videos/<video_id>.mp4
 ```
 
 ### Prepare one model
-To set up a single model:
+
+After preparing the videos, set up a single model:
+
 ```bash
-git clone https://github.com/Beyond3D-bench/vlm-evaluation.git
-cd vlm-evaluation
-
-export OOS_STORAGE_ROOT="/absolute/path/to/storage"
-
 bash setup.sh --model qwen3_5_9b --skip-data
 ```
 
@@ -210,8 +216,8 @@ To evaluate the temporal-cues variant shipped with BEYOND3D, set
 `OOS_DATASET_FILE=vqa_temporal_cues.jsonl`. Setup prepares both variants and their
 shared videos.
 
-`OOS_DATASET_JSONL` is only needed to evaluate a customized local dataset; see the
-[dataset format reference](docs/dataset.md).
+`OOS_DATASET_JSONL` is only needed to evaluate a customized local dataset; see
+[Custom datasets](#custom-datasets).
 
 Results: `outputs/oos_videoqa/<model>/` in the repository.
 Questions are evaluated independently using the corresponding video prefix as context.
@@ -242,7 +248,7 @@ Logs: `logs/oos_videoqa_<job-id>.{out,err}`. Omit `OOS_LIMIT` for a full single-
 | [lmms_eval/](lmms_eval/) | The evaluation framework, including the BEYOND3D task and model adapters. |
 | [tools/](tools/) | Setup, download, dataset-resolution, and verification utilities. |
 | [environments/](environments/) | Locked Python dependency specifications for the supported model environments. |
-| [docs/](docs/) | Dataset format and other reference documentation. |
+| [docs/](docs/) | Visual assets for this README. |
 
 <a id="optional-configuration"></a>
 
@@ -255,12 +261,26 @@ this file automatically.
 - `OOS_STORAGE_ROOT` sets the storage location for environments, model files,
   caches, and benchmark data. Setup and evaluation use the same location.
 - `OOS_VIDEO_PREP_WORKERS` sets the number of video preprocessing workers
-  (default: `8`).
+  (default: `4`).
 - `OOS_VIDEO_DOWNLOAD_WORKERS` sets the number of video download workers
   (default: `8`).
 
-To evaluate a customized local dataset, set `OOS_DATASET_JSONL`; see the
-[dataset format reference](docs/dataset.md). Standard BEYOND3D evaluation automatically uses the data downloaded during setup.
+### Custom datasets
+
+For a local dataset, set `OOS_DATASET_JSONL` to a JSONL file and
+`OOS_VIDEO_BASE_DIR` to the directory containing its videos. Each line needs a
+record ID (`doc_id`, `trajectory_id`, or `id`), a nonnegative `query_time_sec`,
+`video_path`, and a `question`. Multiple-choice questions need a string array
+`choices` and a zero-based `correct_idx`; open questions need `target_text` or
+`answer`. The video path is resolved by filename within `OOS_VIDEO_BASE_DIR`.
+
+```json
+{"doc_id":"example-1","query_time_sec":12.0,"video_path":"example.mp4","question":"Where is the cup?","choices":["On the table","In the sink"],"correct_idx":0}
+```
+
+Check the file before evaluation with
+`python tools/validate_dataset.py "$OOS_DATASET_JSONL"`. Standard BEYOND3D
+evaluation uses the data downloaded during setup.
 
 Other model-specific launch settings are documented in
 [launchers/models/](launchers/models/).
@@ -276,7 +296,7 @@ these remarkable assets.
 
 We also thank the [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) team
 for the evaluation framework that this repository extends. See [LICENSE](LICENSE)
-and [CITATION.cff](CITATION.cff) for attribution and licensing details.
+and the [upstream notices](LICENSES/lmms-eval.txt) for licensing details.
 
 We thank Xiaoxuan Cheng (ETH Zürich) for assistance with executing experiments on the cluster.
 
@@ -284,7 +304,7 @@ We thank Xiaoxuan Cheng (ETH Zürich) for assistance with executing experiments 
 
 ## 📖 Citation
 
-If you use this code or benchmark, please cite:
+If you find our [paper](https://arxiv.org/abs/2609.34630), code, or benchmark dataset useful for your research, please cite our work:
 
 ```bibtex
 @misc{ma2026beyond3d,
@@ -298,7 +318,7 @@ If you use this code or benchmark, please cite:
 }
 ```
 
-Machine-readable metadata is available in [CITATION.cff](CITATION.cff).
+<a id="license"></a>
 
 ## 📄 License
 

@@ -103,8 +103,8 @@ include = ["lmms_eval*"]
 lmms-eval = "lmms_eval.cli.dispatch:main"
 
 [project.urls]
-Homepage = "https://github.com/Zoulution/oos_vlm_evaluation"
-Repository = "https://github.com/Zoulution/oos_vlm_evaluation"
+Homepage = "https://github.com/Beyond3D-bench/vlm-evaluation"
+Repository = "https://github.com/Beyond3D-bench/vlm-evaluation"
 
 
 [tool.pytest.ini_options]
