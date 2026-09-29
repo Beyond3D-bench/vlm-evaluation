@@ -31,7 +31,6 @@ Fangzhou Ma<sup>1*</sup> · <a href="https://ivo-ab.github.io/">Ivo Alexander Ba
     - [Slurm](#slurm)
 - [Repository Structure](#repository-structure)
 - [Optional Configuration](#optional-configuration)
-  - [Custom datasets](#custom-datasets)
 - [Acknowledgements](#acknowledgements)
 - [Citation](#citation)
 - [License](#license)
@@ -138,7 +137,7 @@ $OOS_STORAGE_ROOT/data/BEYOND3D/
 
 It also downloads the required HD-EPIC videos and preprocesses them for evaluation by resizing them to **448×448 at 1 FPS**, adding timestamps to each frame, and masking the black regions outside the Aria glasses' circular fisheye field of view.
 
-By default, setup uses **8 parallel workers for downloading and 4 for preprocessing**. To change the parallelism:
+By default, setup uses **8 parallel workers for downloading and 8 for preprocessing**. To change the parallelism:
 
 ```bash
 OOS_VIDEO_DOWNLOAD_WORKERS=4 OOS_VIDEO_PREP_WORKERS=16 \
@@ -216,8 +215,7 @@ To evaluate the temporal-cues variant shipped with BEYOND3D, set
 `OOS_DATASET_FILE=vqa_temporal_cues.jsonl`. Setup prepares both variants and their
 shared videos.
 
-`OOS_DATASET_JSONL` is only needed to evaluate a customized local dataset; see
-[Custom datasets](#custom-datasets).
+For a local dataset, see the [dataset format guide](docs/dataset.md).
 
 Results: `outputs/oos_videoqa/<model>/` in the repository.
 Questions are evaluated independently using the corresponding video prefix as context.
@@ -248,7 +246,7 @@ Logs: `logs/oos_videoqa_<job-id>.{out,err}`. Omit `OOS_LIMIT` for a full single-
 | [lmms_eval/](lmms_eval/) | The evaluation framework, including the BEYOND3D task and model adapters. |
 | [tools/](tools/) | Setup, download, dataset-resolution, and verification utilities. |
 | [environments/](environments/) | Locked Python dependency specifications for the supported model environments. |
-| [docs/](docs/) | Visual assets for this README. |
+| [docs/](docs/) | Dataset format and visual assets. |
 
 <a id="optional-configuration"></a>
 
@@ -261,26 +259,9 @@ this file automatically.
 - `OOS_STORAGE_ROOT` sets the storage location for environments, model files,
   caches, and benchmark data. Setup and evaluation use the same location.
 - `OOS_VIDEO_PREP_WORKERS` sets the number of video preprocessing workers
-  (default: `4`).
+  (default: `8`).
 - `OOS_VIDEO_DOWNLOAD_WORKERS` sets the number of video download workers
   (default: `8`).
-
-### Custom datasets
-
-For a local dataset, set `OOS_DATASET_JSONL` to a JSONL file and
-`OOS_VIDEO_BASE_DIR` to the directory containing its videos. Each line needs a
-record ID (`doc_id`, `trajectory_id`, or `id`), a nonnegative `query_time_sec`,
-`video_path`, and a `question`. Multiple-choice questions need a string array
-`choices` and a zero-based `correct_idx`; open questions need `target_text` or
-`answer`. The video path is resolved by filename within `OOS_VIDEO_BASE_DIR`.
-
-```json
-{"doc_id":"example-1","query_time_sec":12.0,"video_path":"example.mp4","question":"Where is the cup?","choices":["On the table","In the sink"],"correct_idx":0}
-```
-
-Check the file before evaluation with
-`python tools/validate_dataset.py "$OOS_DATASET_JSONL"`. Standard BEYOND3D
-evaluation uses the data downloaded during setup.
 
 Other model-specific launch settings are documented in
 [launchers/models/](launchers/models/).
