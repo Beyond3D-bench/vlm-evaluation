@@ -3,7 +3,7 @@
 <h1>👀 Long Time No See:<br>Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos</h1>
 
 <p>
-  <a href="#citation"><img src="https://img.shields.io/badge/arXiv-Coming%20Soon-b31b1b?logo=arxiv&logoColor=white" alt="arXiv: coming soon"></a>
+  <a href="https://arxiv.org/abs/2609.34630"><img src="https://img.shields.io/badge/arXiv-2609.34630-b31b1b?logo=arxiv&logoColor=white" alt="arXiv: 2609.34630"></a>
   <a href="https://beyond3d-bench.github.io/website/"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20Website-BEYOND3D-168ac5" alt="BEYOND3D website"></a>
   <a href="https://huggingface.co/datasets/Ffffangzhu/BEYOND3D"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Benchmark-BEYOND3D-f6b10a" alt="BEYOND3D benchmark on Hugging Face"></a>
 </p>
@@ -288,10 +288,13 @@ If you use this code or benchmark, please cite:
 
 ```bibtex
 @misc{ma2026beyond3d,
-  title  = {Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos},
-  author = {Ma, Fangzhou and Ban, Ivo Alexander and Homburg, Eren and Goletto, Gabriele and Pautrat, R\'emi and Rad, Mahdi and Plizzari, Chiara and Pollefeys, Marc},
-  year   = {2026},
-  note   = {Manuscript}
+  title        = {Long Time No See: Benchmarking VLMs for Out-of-Sight Spatiotemporal Reasoning in Egocentric Videos},
+  author       = {Fangzhou Ma and Ivo Alexander Ban and Eren Homburg and Gabriele Goletto and Rémi Pautrat and Mahdi Rad and Chiara Plizzari and Marc Pollefeys},
+  year         = {2026},
+  eprint       = {2609.34630},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CV},
+  url          = {https://arxiv.org/abs/2609.34630}
 }
 ```
 
